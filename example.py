@@ -2,5 +2,6 @@ from byteflow import Agent
 
 agent = Agent()
 
-response = agent.run("Hello")
-print(response)
+agent.remember("name", "Aman")
+
+print(agent.recall("name"))
