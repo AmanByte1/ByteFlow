@@ -1,9 +1,15 @@
 class Memory:
     def __init__(self):
-        self.data = {}
+        self.history = []
 
-    def store(self, key, value):
-        self.data[key] = value
+    def add(self, role, content):
+        self.history.append({
+            "role": role,
+            "content": content
+        })
 
-    def get(self, key):
-        return self.data.get(key)
+    def get_recent(self, n=5):
+        return self.history[-n:]
+
+    def clear(self):
+        self.history = []

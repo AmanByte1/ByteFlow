@@ -1,5 +1,6 @@
 import ollama
 
+
 class OllamaProvider:
     def __init__(self, model="llama3"):
         self.model = model
