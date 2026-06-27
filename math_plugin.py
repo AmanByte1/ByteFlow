@@ -1,4 +1,5 @@
 from byteflow.plugin import Plugin
+from byteflow.tools import Tool
 
 class MathPlugin(Plugin):
     def __init__(self):
@@ -6,6 +7,5 @@ class MathPlugin(Plugin):
 
     def setup(self, agent):
         agent.register_tool(
-            "multiply",
-            lambda a, b: a * b
+            Tool("multiply", lambda a, b: a * b, "multiplies two numbers")
         )

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "byteflow"
+version = "0.1.0"
+description = "A lightweight AI agent framework built from scratch"
+authors = [
+  { name="Aman", email="saiaman021005@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "click>=8.0",
+]
+
+[project.optional-dependencies]
+ollama = ["ollama"]
+dev = ["pytest"]
+clipboard = ["pyperclip"]
+voice = ["pyttsx3", "vosk", "sounddevice"]
+embeddings = ["sentence-transformers"]
+
+[tool.setuptools]
+packages = ["byteflow", "byteflow.providers"]
+
+[project.scripts]
+byteflow = "byteflow.cli:cli"
