@@ -1,15 +1,15 @@
 class Plugin:
+    """
+    Base class for ByteFlow plugins.
+
+    Subclasses should override setup() to register tools,
+    hooks, or other behavior onto the given agent.
+    """
+
     def __init__(self, name):
         self.name = name
 
-    # def setup(self, agent):
-    #     pass
-    def load_plugin(self, plugin):
-        for p in self.plugins:
-            if p.name == plugin.name:
-                return f"Plugin '{plugin.name}' already loaded"
-    
-        plugin.setup(self)
-        self.plugins.append(plugin)
-
-        return f"Plugin '{plugin.name}' loaded"
+    def setup(self, agent):
+        raise NotImplementedError(
+            f"Plugin '{self.name}' must implement setup(agent)"
+        )
