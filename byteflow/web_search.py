@@ -22,11 +22,32 @@ from html.parser import HTMLParser
 
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 
-# A realistic browser User-Agent - DuckDuckGo (like most sites) blocks
-# requests that look like bare scripts with no User-Agent at all.
+# A realistic browser User-Agent and the headers a real browser sends
+# alongside it - DuckDuckGo (like most sites) is far more likely to
+# serve a bot-challenge page instead of real results to a request that
+# only sets User-Agent and nothing else a browser would normally send.
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+_REQUEST_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://duckduckgo.com/",
+}
+
+# Substrings that show up on DuckDuckGo's bot-challenge / "unusual
+# traffic" interstitial pages rather than a real results page. Checked
+# on the raw HTML before parsing, so a block gets reported honestly as
+# "search unavailable" instead of silently looking like "no results
+# for your query" - those are very different situations and a caller
+# should be told which one actually happened.
+_BLOCK_PAGE_MARKERS = (
+    "anomaly",
+    "unusual traffic",
+    "problem-solving",
+    "if you are seeing this",
 )
 
 
@@ -36,17 +57,22 @@ class WebSearchError(Exception):
 
 class _ResultParser(HTMLParser):
     """
-    Parses html.duckduckgo.com's result markup. Each result lives in a
-    `<div class="result results_links ...">` containing:
-      - an `<a class="result__a" href="...">title text</a>`
-      - an element with class containing "result__snippet" for the snippet
-
-    This is intentionally tolerant: if DuckDuckGo's markup shifts
-    slightly (extra classes, nesting changes), the class-substring
-    checks below (`"result__a" in classes`) are more likely to keep
-    working than an exact CSS-selector match would be. If the structure
-    changes enough to break this entirely, search() returns an empty
-    list / honest error rather than garbage results - see search().
+    Parses html.duckduckgo.com's result markup. In the current markup
+    each result title lives in an `<a class="result__a" href="...">`,
+    but that class name is not part of any stable contract - DuckDuckGo
+    has changed/obfuscated result classes before. To survive that, a
+    title link is recognized two ways, either is enough:
+      - the classic `class` contains "result__a", OR
+      - the href matches DuckDuckGo's redirect-wrapper shape
+        ("duckduckgo.com/l/?uddg=..."), which is how DDG wraps every
+        real outbound result link regardless of what CSS class it
+        currently uses - this is a much more stable signal than a
+        class name because it's load-bearing (DDG needs it to track
+        clickthroughs), not just presentational.
+    The snippet is still matched by class-substring ("result__snippet")
+    since there's no similarly stable non-class signal for it; losing
+    snippets on a markup change degrades gracefully (empty snippet,
+    title/url still present) rather than losing the whole result.
     """
 
     def __init__(self):
@@ -60,9 +86,10 @@ class _ResultParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
         classes = attrs_dict.get("class", "")
+        href = attrs_dict.get("href", "")
 
-        if tag == "a" and "result__a" in classes:
-            self._current = {"title": "", "url": attrs_dict.get("href", ""), "snippet": ""}
+        if tag == "a" and ("result__a" in classes or "uddg=" in href):
+            self._current = {"title": "", "url": href, "snippet": ""}
             self._in_title_link = True
 
         elif "result__snippet" in classes:
@@ -106,14 +133,29 @@ def _clean_ddg_redirect_url(url):
     return url
 
 
+def _looks_like_block_page(html):
+    """
+    True if `html` looks like a DuckDuckGo bot-challenge/anomaly page
+    rather than a normal results page. Checked on a lowercased slice of
+    the body so this stays cheap on large pages.
+    """
+    sample = html[:5000].lower()
+    return any(marker in sample for marker in _BLOCK_PAGE_MARKERS)
+
+
 def search(query, max_results=5, timeout=10):
     """
     Search the web via DuckDuckGo's HTML endpoint. Returns a list of
     dicts: [{"title": ..., "url": ..., "snippet": ...}, ...], up to
     max_results entries. Returns an empty list if there are genuinely
     no results. Raises WebSearchError with a clear message on network
-    failure or if the response can't be parsed at all - callers should
-    catch this and degrade gracefully (see agent.py's web_search tool).
+    failure, if DuckDuckGo serves a bot-challenge page instead of
+    results, or if the response can't be parsed at all - callers
+    should catch this and degrade gracefully (see agent.py's
+    web_search tool). This distinction matters: "genuinely no results"
+    and "the request got blocked" look identical to a naive caller
+    unless blocking is detected explicitly, which is what
+    _looks_like_block_page() is for.
     """
     if not query or not query.strip():
         return []
@@ -121,7 +163,7 @@ def search(query, max_results=5, timeout=10):
     params = urllib.parse.urlencode({"q": query})
     url = f"{SEARCH_URL}?{params}"
 
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    request = urllib.request.Request(url, headers=_REQUEST_HEADERS)
 
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -138,6 +180,15 @@ def search(query, max_results=5, timeout=10):
         ) from e
     except TimeoutError as e:
         raise WebSearchError(f"Search request timed out after {timeout}s.") from e
+
+    if _looks_like_block_page(html):
+        raise WebSearchError(
+            "DuckDuckGo returned a bot-detection/anomaly page instead of "
+            "results for this request - it's blocking automated traffic "
+            "from this network right now, not reporting a genuine "
+            "zero-result search. Waiting a bit before retrying, or "
+            "switching networks, usually resolves this."
+        )
 
     parser = _ResultParser()
     try:

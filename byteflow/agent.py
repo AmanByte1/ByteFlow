@@ -1010,6 +1010,53 @@ Examples:
 
         return False
 
+    # Cues that show up in the agent's OWN previous reply when it asked
+    # the person to clarify a location for a weather question (see the
+    # personality/chat() prompt - the model naturally asks this when a
+    # weather question has no place in it). Used to recognize the next
+    # turn as an answer to THAT question rather than a new, unrelated
+    # topic - a real observed bug: asking "today weather" -> agent asks
+    # "which city?" -> answering "ahmedabad" got treated as a brand new
+    # standalone message ("Ahmedabad is a city in India") instead of
+    # being reattached to the pending weather question.
+    _LOCATION_CLARIFICATION_CUES = (
+        "specify a location", "specify a city", "which city",
+        "which location", "what city", "what location",
+    )
+
+    def _pending_weather_location_followup(self, prompt):
+        """
+        If the agent's last reply asked for a location to answer a
+        weather question, and `prompt` looks like a bare place-name
+        answer (short, no question mark, not itself a new command),
+        return a proper standalone search query combining the two
+        ("weather in ahmedabad today"). Otherwise return None.
+        """
+        p = prompt.strip()
+        if not p or "?" in p:
+            return None
+        word_count = len(p.split())
+        if word_count > 4:
+            return None
+        # a bare answer shouldn't itself look like a new request
+        if (
+            self._looks_like_datetime_request(prompt)
+            or self._looks_like_code_request(prompt)
+            or self._looks_like_chat_only(prompt)
+        ):
+            return None
+
+        recent = self.memory.get_recent(2)
+        if len(recent) < 1:
+            return None
+        last = recent[-1]
+        if last.get("role") != "assistant":
+            return None
+        last_content = last.get("content", "").lower()
+        if any(cue in last_content for cue in self._LOCATION_CLARIFICATION_CUES):
+            return f"weather in {p} today"
+        return None
+
     def run(self, prompt, execute_code=True):
         """
         Main autonomous entrypoint: try to plan + execute tool calls.
@@ -1040,6 +1087,10 @@ Examples:
         """
         if not self.provider:
             return prompt
+
+        followup_query = self._pending_weather_location_followup(prompt)
+        if followup_query is not None:
+            return self.chat_with_search(followup_query)
 
         if self._looks_like_datetime_request(prompt):
             return self._answer_datetime_request(prompt)
