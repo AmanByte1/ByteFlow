@@ -76,10 +76,19 @@ def run_python_code(code, timeout=10):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                stdin=subprocess.DEVNULL,
             )
+            stderr = proc.stderr
+            if proc.returncode != 0 and "EOFError" in stderr and "input(" in code:
+                stderr += (
+                    "\n[Note: this sandbox runs code non-interactively with no "
+                    "stdin, so input() always raises EOFError immediately. "
+                    "Rewrite the snippet with fixed sample values instead of "
+                    "calling input().]"
+                )
             return ExecutionResult(
                 stdout=proc.stdout,
-                stderr=proc.stderr,
+                stderr=stderr,
                 returncode=proc.returncode,
             )
         except subprocess.TimeoutExpired as e:

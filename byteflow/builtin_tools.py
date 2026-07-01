@@ -47,6 +47,8 @@ def _web_search_raw(query, max_results=4):
     answer reads poorly and doesn't synthesize anything.
     """
     from .web_search import search_formatted
+    from .agent import Agent
+    query = Agent._clean_search_query(query)
     return search_formatted(query, max_results=int(_to_number(max_results)))
 
 

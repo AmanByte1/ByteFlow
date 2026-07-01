@@ -47,6 +47,11 @@ SHORTCUTS = {
     "netflix": "https://www.netflix.com",
     "instagram": "https://www.instagram.com",
     "reddit": "https://www.reddit.com",
+    "google": "https://www.google.com",
+    "googlesearch": "https://www.google.com",
+    "maps": "https://maps.google.com",
+    "googlemaps": "https://maps.google.com",
+    "amazon": "https://www.amazon.com",
     # dev tools
     "github": "https://github.com",
     "stackoverflow": "https://stackoverflow.com",

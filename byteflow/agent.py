@@ -288,6 +288,15 @@ Use the Python standard library (and well-known third-party libraries if
 genuinely helpful) where appropriate, rather than reinventing things by
 hand. Prefer simple, readable code over clever one-liners.
 
+IMPORTANT: this code may be executed non-interactively in a sandbox with
+no stdin attached. NEVER use input() - it will block forever and the run
+will simply time out with no useful output. If the task is naturally
+about taking two numbers, a name, etc., write a function that takes
+parameters and call it with a couple of concrete, hardcoded example
+values (e.g. a small `if __name__ == "__main__":` block calling the
+function with sample inputs and printing the result), so the script
+still runs to completion and shows real output on its own.
+
 If the request asks a question rather than to "write" something, still
 answer with runnable code that demonstrates/computes the answer where
 that makes sense (e.g. a math question -> a short script that prints
@@ -468,6 +477,45 @@ User:
         self.learn_from_exchange(message, response)
         return response
 
+    # Phrases people type as part of a *request to search* rather than
+    # part of the actual topic - e.g. "web search and give me top places
+    # in india" should search for "top places in india", not the literal
+    # sentence including "web search and give me". Sent verbatim, that
+    # extra command text pollutes the query and DuckDuckGo often returns
+    # nothing relevant. Stripped from the front only (order matters -
+    # longer/more specific patterns first so they win over a shorter
+    # partial match).
+    _SEARCH_COMMAND_PREFIXES = (
+        r"^(please\s+)?(can|could)\s+you\s+",
+        r"^(please\s+)?(do\s+a\s+|perform\s+a\s+)?web\s*search\s*(the\s*web\s*)?(for|on|about)?\s*(and\s+(give|tell|find)\s+me\s*)?",
+        r"^(please\s+)?search\s+(the\s+)?web\s*(for|on|about)?\s*(and\s+(give|tell|find)\s+me\s*)?",
+        r"^(please\s+)?google\s+(search\s+)?(for)?\s*",
+        r"^(please\s+)?look\s*up\s*",
+        r"^(please\s+)?find\s+me\s*",
+        r"^(please\s+)?give\s+me\s*",
+        r"^(please\s+)?tell\s+me\s*",
+    )
+
+    @classmethod
+    def _clean_search_query(cls, text):
+        """
+        Strip leading command phrasing ("web search and give me...",
+        "can you search for...") off `text`, leaving just the topic to
+        actually search for. Applies prefixes repeatedly since more than
+        one can stack ("can you web search and give me..."). Falls back
+        to the original text if stripping would leave nothing.
+        """
+        cleaned = text.strip()
+        changed = True
+        while changed:
+            changed = False
+            for pattern in cls._SEARCH_COMMAND_PREFIXES:
+                new = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+                if new != cleaned:
+                    cleaned = new
+                    changed = True
+        return cleaned if cleaned else text.strip()
+
     def chat_with_search(self, message, max_results=4):
         """
         Like chat(), but first performs a real web search (DuckDuckGo,
@@ -495,11 +543,13 @@ User:
 
         self.add_memory("user", message)
 
+        query = self._clean_search_query(message)
+
         try:
-            results = search(message, max_results=max_results)
+            results = search(query, max_results=max_results)
         except WebSearchError as e:
             answer = (
-                f"I tried to search the web for this, but it didn't work ({e}). "
+                f"I tried to search the web for \"{query}\", but it didn't work ({e}). "
                 f"I don't want to guess or make up current information, so I can't "
                 f"give you a reliable answer to that right now."
             )
@@ -508,7 +558,7 @@ User:
 
         if not results:
             answer = (
-                f"I searched the web but didn't find any results for that. "
+                f"I searched the web for \"{query}\" but didn't find any results. "
                 f"I don't want to guess or make up an answer, so I can't help "
                 f"with that specific question right now."
             )
@@ -894,12 +944,40 @@ Examples:
         "weather in", "weather today", "weather forecast",
         "news about", "news on", "breaking news",
         "recent developments", "recent news",
+        "who won", "final score", "live score",
     )
+
+    # Topic words that are almost always asked about because someone wants
+    # up-to-the-minute info (weather, sports fixtures/scores, etc), paired
+    # with a "right now" word - same word-order-agnostic proximity idea as
+    # _looks_like_datetime_request, since real queries are terse and don't
+    # respect fixed phrase order ("today weather" as often as "weather
+    # today"). This is what fixes queries like "today weather" and "fifa
+    # match today" that a fixed phrase list alone would miss.
+    _SEARCH_TOPIC_WORDS = (
+        "weather", "match", "score", "scores", "fixture", "fixtures",
+        "game", "tournament", "standings", "schedule",
+    )
+    _SEARCH_PRESENT_WORDS = (
+        "today", "todays", "tonight", "now", "current", "currently",
+        "latest", "live", "tomorrow",
+    )
+
+    # A few topics that are inherently about "right now" even with no
+    # explicit present-tense word attached ("fifa match" almost always
+    # means "what's on / what happened", not a request to explain what
+    # FIFA is) - kept short and specific to avoid false positives.
+    # NOTE: "weather" is deliberately NOT here - it's handled by the
+    # topic+present-word pairing above instead, so general/hypothetical
+    # weather questions ("what's the weather usually like in winter")
+    # don't get force-routed to a live search.
+    _ALWAYS_SEARCH_TOPICS = ("fifa", "world cup")
 
     def _looks_like_search_request(self, prompt):
         p = prompt.lower()
         if any(pattern in p for pattern in self._SEARCH_INTENT_PATTERNS):
             return True
+
         # "top N ... today/this week" - e.g. "top 10 ai news today",
         # "top 5 movies this week" - a shape that's hard to enumerate
         # as fixed phrases since the topic word varies every time
@@ -907,6 +985,29 @@ Examples:
             w in p for w in ("today", "this week", "this month", "this year", "now")
         ):
             return True
+
+        words = re.findall(r"\w+", p)
+
+        # word-order-agnostic pairing: a "right now" topic (weather,
+        # match, score...) near a "right now" word (today, live,
+        # current...) anywhere in the message - catches "today weather"
+        # as readily as "weather today"
+        topic_positions = [i for i, w in enumerate(words) if w in self._SEARCH_TOPIC_WORDS]
+        present_positions = [i for i, w in enumerate(words) if w in self._SEARCH_PRESENT_WORDS]
+        if topic_positions and present_positions:
+            closest_gap = min(
+                abs(t - pr) for t in topic_positions for pr in present_positions
+            )
+            if closest_gap <= 3:
+                return True
+
+        # a small set of topics that are inherently about "right now"
+        # even with no present-tense word attached at all
+        if len(p) <= 60 and any(
+            self._contains_word(p, w) for w in self._ALWAYS_SEARCH_TOPICS
+        ):
+            return True
+
         return False
 
     def run(self, prompt, execute_code=True):
