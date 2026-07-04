@@ -918,6 +918,78 @@ Examples:
             return f"It's currently {now.strftime('%I:%M %p')} (system local time)."
         return f"Today's date is {now.strftime('%A, %B %d, %Y')}."
 
+    # -----------------------------
+    # WEATHER (real API, not general web search)
+    # -----------------------------
+    # Weather questions are common enough, and answerable by a real
+    # free API (see weather.py, Open-Meteo - no key, no signup), that
+    # they're handled directly rather than routed through general web
+    # search. This is both more reliable (not subject to DuckDuckGo's
+    # bot-detection/blocking - a real observed failure mode, see
+    # web_search.py) and more accurate (a real number from a weather
+    # API beats whatever a search snippet happens to mention).
+    _WEATHER_WORDS = ("weather", "forecast", "temperature")
+
+    # Words to strip out of a weather prompt to find the location, if
+    # any - what's left over after removing these is treated as the
+    # place name ("ahmedabad today weather" -> "ahmedabad").
+    _WEATHER_STOPWORDS = frozenset({
+        "weather", "forecast", "temperature", "today", "todays", "tonight",
+        "now", "current", "currently", "like", "whats", "what", "is",
+        "the", "in", "at", "for", "tell", "me", "please", "give",
+        "check", "how", "hows", "s",
+    })
+
+    def _looks_like_weather_request(self, prompt):
+        p = prompt.strip().lower()
+        if not p or len(p) > 80:
+            return False
+        return any(self._contains_word(p, w) for w in self._WEATHER_WORDS)
+
+    def _extract_weather_location(self, prompt):
+        """Best-effort location extraction: strip weather/time/filler
+        words and return whatever's left, title-cased for display.
+        Returns "" if nothing meaningful remains (caller should ask)."""
+        words = re.findall(r"[a-zA-Z]+", prompt.lower())
+        location_words = [w for w in words if w not in self._WEATHER_STOPWORDS]
+        return " ".join(location_words).strip()
+
+    def _answer_weather_request(self, prompt):
+        from .weather import get_current_weather, WeatherError
+
+        self.add_memory("user", prompt)
+
+        location = self._extract_weather_location(prompt)
+        if not location:
+            answer = (
+                "I can check real current weather for you, but I need a "
+                "location - which city?"
+            )
+            self.add_memory("assistant", answer)
+            return answer
+
+        try:
+            w = get_current_weather(location)
+        except WeatherError as e:
+            answer = (
+                f"I tried to look up the weather for \"{location}\", but it "
+                f"didn't work ({e}). I don't want to guess, so I can't give "
+                f"you a reliable answer right now."
+            )
+            self.add_memory("assistant", answer)
+            return answer
+
+        temp_c = w["temperature_c"]
+        temp_f = temp_c * 9 / 5 + 32
+        wind = w["windspeed_kmh"]
+        wind_part = f", wind {wind:.0f} km/h" if wind is not None else ""
+        answer = (
+            f"Current weather in {w['location']}: {w['description']}, "
+            f"{temp_c:.1f}\u00b0C ({temp_f:.1f}\u00b0F){wind_part}."
+        )
+        self.add_memory("assistant", answer)
+        return answer
+
     # Phrases/patterns that strongly suggest the question needs current,
     # real-world information the model's training data can't have (the
     # model has a fixed knowledge cutoff and no built-in way to know
@@ -932,30 +1004,31 @@ Examples:
     # learned X", which have nothing to do with needing a web search.
     _SEARCH_INTENT_PATTERNS = (
         "latest news", "latest update", "latest version", "what's the latest",
-        "current price", "current weather", "current president",
+        "current price", "current president",
         "current prime minister", "current ceo", "current events",
-        "today's weather", "today's news", "news today",
+        "today's news", "news today",
         "this week's", "this month's", "this year's",
         "right now in", "as of now",
         "what's new with", "what is new with", "what's happening with",
         "who is the current", "who is the president", "who is the prime minister",
         "who is the ceo of", "who is the current ceo",
         "stock price", "exchange rate",
-        "weather in", "weather today", "weather forecast",
         "news about", "news on", "breaking news",
         "recent developments", "recent news",
         "who won", "final score", "live score",
     )
 
     # Topic words that are almost always asked about because someone wants
-    # up-to-the-minute info (weather, sports fixtures/scores, etc), paired
-    # with a "right now" word - same word-order-agnostic proximity idea as
+    # up-to-the-minute info (sports fixtures/scores, etc), paired with a
+    # "right now" word - same word-order-agnostic proximity idea as
     # _looks_like_datetime_request, since real queries are terse and don't
-    # respect fixed phrase order ("today weather" as often as "weather
-    # today"). This is what fixes queries like "today weather" and "fifa
-    # match today" that a fixed phrase list alone would miss.
+    # respect fixed phrase order. This is what fixes queries like "fifa
+    # match today" that a fixed phrase list alone would miss. Weather
+    # words are deliberately NOT here - "weather" is handled by its own
+    # dedicated real-API path (_looks_like_weather_request), checked
+    # earlier in run(), so it never reaches general web search at all.
     _SEARCH_TOPIC_WORDS = (
-        "weather", "match", "score", "scores", "fixture", "fixtures",
+        "match", "score", "scores", "fixture", "fixtures",
         "game", "tournament", "standings", "schedule",
     )
     _SEARCH_PRESENT_WORDS = (
@@ -967,10 +1040,6 @@ Examples:
     # explicit present-tense word attached ("fifa match" almost always
     # means "what's on / what happened", not a request to explain what
     # FIFA is) - kept short and specific to avoid false positives.
-    # NOTE: "weather" is deliberately NOT here - it's handled by the
-    # topic+present-word pairing above instead, so general/hypothetical
-    # weather questions ("what's the weather usually like in winter")
-    # don't get force-routed to a live search.
     _ALWAYS_SEARCH_TOPICS = ("fifa", "world cup")
 
     def _looks_like_search_request(self, prompt):
@@ -1029,8 +1098,9 @@ Examples:
         If the agent's last reply asked for a location to answer a
         weather question, and `prompt` looks like a bare place-name
         answer (short, no question mark, not itself a new command),
-        return a proper standalone search query combining the two
-        ("weather in ahmedabad today"). Otherwise return None.
+        return a synthetic weather prompt combining the two
+        ("weather in ahmedabad today") for _answer_weather_request() to
+        extract the location from. Otherwise return None.
         """
         p = prompt.strip()
         if not p or "?" in p:
@@ -1084,13 +1154,22 @@ Examples:
         100% accurate and instant. This fixes a real observed bug where
         the model returned the literal placeholder text "[current date]"
         when asked this through a search-based path.
+
+        Weather questions ("today weather", "weather in Ahmedabad") are
+        answered directly via a real free weather API (see weather.py,
+        Open-Meteo) rather than general web search - more reliable
+        (not subject to DuckDuckGo's bot-blocking) and more accurate
+        than pulling a number out of a search snippet. If no location
+        can be extracted, the agent asks for one; the next turn's bare
+        place-name answer is reattached automatically (see
+        _pending_weather_location_followup).
         """
         if not self.provider:
             return prompt
 
         followup_query = self._pending_weather_location_followup(prompt)
         if followup_query is not None:
-            return self.chat_with_search(followup_query)
+            return self._answer_weather_request(followup_query)
 
         if self._looks_like_datetime_request(prompt):
             return self._answer_datetime_request(prompt)
@@ -1100,6 +1179,9 @@ Examples:
 
         if self._looks_like_chat_only(prompt):
             return self.chat(prompt)
+
+        if self._looks_like_weather_request(prompt):
+            return self._answer_weather_request(prompt)
 
         if self._looks_like_search_request(prompt):
             return self.chat_with_search(prompt)

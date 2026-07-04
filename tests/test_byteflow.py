@@ -1732,12 +1732,43 @@ def test_looks_like_search_request_catches_current_events_questions():
     true_positives = [
         "what is the latest news on AI",
         "who is the current president of the US",
-        "what is the weather today",
         "who is the ceo of Tesla",
         "stock price of Apple",
     ]
     for msg in true_positives:
         assert agent._looks_like_search_request(msg) is True, f"{msg!r} should trigger search"
+
+
+def test_looks_like_search_request_excludes_weather():
+    # Weather now has its own dedicated, more reliable path via a real
+    # free weather API (weather.py / Open-Meteo) instead of being routed
+    # through general web search - see _looks_like_weather_request.
+    agent = Agent(provider=None, memory_path=False)
+    weather_prompts = ["what is the weather today", "today weather", "weather in Ahmedabad"]
+    for msg in weather_prompts:
+        assert agent._looks_like_search_request(msg) is False, f"{msg!r} should NOT go through general search"
+
+
+def test_looks_like_weather_request_catches_weather_questions():
+    agent = Agent(provider=None, memory_path=False)
+    true_positives = [
+        "what is the weather today", "today weather", "weather in Ahmedabad",
+        "today waether ahemdabad".replace("waether", "weather"),  # sanity: exact word still required
+        "forecast for tomorrow", "current temperature",
+    ]
+    for msg in true_positives:
+        assert agent._looks_like_weather_request(msg) is True, f"{msg!r} should be recognized as a weather question"
+
+    false_positives = ["what is my name", "add 10 and 20", "who is the ceo of Tesla"]
+    for msg in false_positives:
+        assert agent._looks_like_weather_request(msg) is False, f"{msg!r} should NOT be recognized as a weather question"
+
+
+def test_extract_weather_location_strips_filler_words():
+    agent = Agent(provider=None, memory_path=False)
+    assert agent._extract_weather_location("today weather ahmedabad") == "ahmedabad"
+    assert agent._extract_weather_location("what is the weather like in ahmedabad") == "ahmedabad"
+    assert agent._extract_weather_location("weather today") == ""
 
 
 def test_looks_like_datetime_request_catches_date_and_time_questions():

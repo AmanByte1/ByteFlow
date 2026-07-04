@@ -72,6 +72,16 @@ def _make_web_search_tool(agent):
     return _web_search_bound
 
 
+def _get_weather(location):
+    """
+    Real current weather for `location` via Open-Meteo (free, no API
+    key) - see weather.py. Returns a readable one-line summary, or a
+    clear "[Weather lookup unavailable: ...]" message on failure.
+    """
+    from .weather import get_current_weather_formatted
+    return get_current_weather_formatted(location)
+
+
 def get_builtin_tools(agent=None):
     """
     Return the list of built-in Tool instances.
@@ -90,6 +100,7 @@ def get_builtin_tools(agent=None):
         Tool("multiply", _multiply, "multiplies two numbers"),
         Tool("divide", _divide, "divides the first number by the second"),
         Tool("web_search", web_search_fn, "searches the web for current information and gives a summarized answer"),
+        Tool("get_weather", _get_weather, "gets real current weather (temperature, conditions, wind) for a named city, via a free weather API"),
     ]
 
 
