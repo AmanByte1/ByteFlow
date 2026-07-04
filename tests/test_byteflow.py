@@ -953,7 +953,7 @@ def test_companion_full_round_trip_via_polling():
     assert controller.busy is False
 
 
-def test_companion_busy_send_returns_thinking_notice_not_a_real_call():
+def test_companion_busy_send_queues_and_answers_the_second_message():
     import time
 
     class CountingProvider:
@@ -972,19 +972,28 @@ def test_companion_busy_send_returns_thinking_notice_not_a_real_call():
     controller.send("second, sent while still busy")
     time.sleep(0.05)
 
+    # sending while busy queues the message and returns a notice - it
+    # must NOT be silently discarded. A real observed bug: the old
+    # behavior threw the second message away entirely, so a real
+    # question typed while the agent was still thinking about the
+    # previous one just vanished with no way to recover it.
     notice = controller.poll_reply()
     assert "still thinking" in notice.lower()
 
-    # the second send must NOT have spawned its own set of agent calls -
-    # whatever the FIRST message's call count ends up being (run() with
-    # no tools registered goes through _single_step -> chat() ->
-    # learn_from_exchange, i.e. 3 calls), it must not double.
-    time.sleep(0.6)
-    calls_for_one_message = provider.calls
-    assert calls_for_one_message > 0
+    # both messages must eventually be answered, one after the other -
+    # collect replies until we've seen two (the first message's reply,
+    # then the queued second message's reply)
+    replies = []
+    for _ in range(50):
+        time.sleep(0.1)
+        reply = controller.poll_reply()
+        if reply is not None:
+            replies.append(reply)
+        if len(replies) >= 2:
+            break
 
-    time.sleep(0.3)  # give any (incorrect) second worker a chance to run
-    assert provider.calls == calls_for_one_message  # unchanged - no second call happened
+    assert len(replies) == 2, f"expected both messages answered, got {replies}"
+    assert not controller.busy
 
 
 def test_companion_empty_message_is_ignored():

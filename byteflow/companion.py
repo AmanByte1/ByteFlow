@@ -38,6 +38,8 @@ class CompanionController:
         self.agent = agent
         self.replies = queue.Queue()
         self._busy = False
+        self._pending_messages = []
+        self._lock = threading.Lock()
 
         self.speaker = None
         if speak_replies:
@@ -71,6 +73,16 @@ class CompanionController:
         returns immediately. The reply (or an error string) will show up
         in self.replies once ready; poll it from the GUI loop.
 
+        If a message is already being processed, this one is QUEUED
+        rather than dropped - it will be answered right after the
+        current one finishes, in the order it was sent. A real observed
+        bug: messages sent while busy used to be discarded entirely
+        (only a "still thinking" notice was shown, with no way to
+        recover the actual question) - someone who typed a real
+        question while the agent was still working on the previous one
+        would simply never get an answer to it and have to notice and
+        retype it themselves.
+
         Uses agent.run(), the same smart entrypoint as `byteflow run` -
         so the companion has access to everything: registered tools
         (math, desktop helpers if you registered them), auto-routed
@@ -78,24 +90,43 @@ class CompanionController:
         chat for everything else. This is what gives the companion
         "all the modules" rather than only ever chatting.
         """
-        if self._busy:
-            self.replies.put("[Still thinking about your last message - one moment.]")
-            return
-
         if not message or not message.strip():
             return
 
-        self._busy = True
+        with self._lock:
+            if self._busy:
+                self._pending_messages.append(message)
+                self.replies.put(
+                    "[Still thinking about your last message - I'll answer "
+                    "this one right after.]"
+                )
+                return
+            self._busy = True
 
+        self._run_worker(message)
+
+    def _run_worker(self, message):
         def worker():
             try:
                 result = self.agent.run(message)
                 reply = self._format_result(result)
             except Exception as e:
                 reply = f"[Error: {e}]"
-            finally:
-                self._busy = False
             self.replies.put(reply)
+
+            # Pick up the next queued message (if any) and keep going
+            # without ever setting _busy back to False in between, so a
+            # message sent by someone else during this window still
+            # queues correctly instead of racing in as a second worker.
+            next_message = None
+            with self._lock:
+                if self._pending_messages:
+                    next_message = self._pending_messages.pop(0)
+                else:
+                    self._busy = False
+
+            if next_message is not None:
+                self._run_worker(next_message)
 
         threading.Thread(target=worker, daemon=True).start()
 

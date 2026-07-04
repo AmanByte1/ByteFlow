@@ -468,6 +468,16 @@ Return ONLY the JSON list or the literal null. No other text.
 
         prompt = f"""{personality_block}{self.recalled_context(message)}
 
+Answer the CURRENT message below directly and specifically. Use the
+document excerpts and conversation history above as your only source
+of truth about what has actually been said or shared - don't invent
+details about earlier turns, and don't re-narrate or summarize the
+conversation history back to the user as a reminder of what they said;
+they already know. If the context above doesn't contain enough
+information to answer clearly (e.g. it doesn't actually mention what's
+being asked about), say what's missing rather than guessing or making
+something up.
+
 User:
 {message}
 """
@@ -1030,6 +1040,31 @@ Examples:
             return True
         if re.search(r"answer\s+(of|to|for)\s+(question|q)\b", p):
             return True
+        # typo-tolerant: catches "qution", "qustion", "quesion" etc. -
+        # a real observed bug ("answer 1 qution") fell through the
+        # exact-spelling checks above and reached the planner, which
+        # hallucinated a tool call that returned an empty string
+        if re.search(r"\banswer\b", p) and re.search(r"\bq\w{2,10}tion\b", p):
+            return True
+
+        # Once a real document has been ingested, a short, vague message
+        # that doesn't clearly ask for some OTHER specific action (math,
+        # launching an app, etc.) is far more likely to be a follow-up
+        # about that document than to need a tool - the planner has
+        # repeatedly been observed hallucinating a plausible-sounding
+        # but wrong tool for exactly these short/garbled messages.
+        # Preferring the grounded chat()/RAG answer here is the safer
+        # default.
+        if self.vector_store.has_documents() and 0 < len(p.split()) <= 8:
+            other_intent_words = (
+                "open", "launch", "start", "add", "subtract", "multiply",
+                "divide", "plus", "minus", "times", "weather", "forecast",
+                "temperature", "code", "debug", "function", "script",
+                "search", "google", "post", "tweet",
+            )
+            if not any(self._contains_word(p, w) for w in other_intent_words):
+                return True
+
         return False
 
     # Phrases/patterns that strongly suggest the question needs current,
