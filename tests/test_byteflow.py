@@ -1321,6 +1321,16 @@ def test_vector_store_add_and_search_short_entries():
     assert results[0]["source"] == "chat:1"
 
 
+def test_vector_store_has_documents():
+    store = VectorStore()
+    assert store.has_documents() is False
+
+    store.add_document("some notes about the project", source="notes.pdf")
+    assert store.has_documents() is True
+    assert store.has_documents(source_prefix="notes") is True
+    assert store.has_documents(source_prefix="other") is False
+
+
 def test_vector_store_chunks_long_documents_automatically():
     store = VectorStore()
     long_doc = " ".join([f"Paragraph {i} about hiking trails." for i in range(30)])
@@ -2250,6 +2260,55 @@ def test_companion_on_upload_fix_end_to_end_via_ingest():
         results = agent.vector_store.search("data structures algorithms second chapter")
         assert len(results) >= 1
         assert "Data Structures" in results[0]["text"] or "arrays" in results[0]["text"].lower()
+
+
+# -----------------------------
+# DOCUMENT-REFERENCE DETECTION (bypass the tool planner for PDF/doc Q&A)
+# -----------------------------
+
+def test_looks_like_document_request_catches_pdf_references():
+    agent = Agent(provider=None, memory_path=False)
+    true_positives = [
+        "from pdf give me answer",
+        "from pdf",
+        "yes give me answer of 1 to 10 question in detail",
+        "answer question no 3",
+        "explain question 5 in detail",
+        "from the document, summarize chapter 2",
+        "based on the file, what is a compiler",
+    ]
+    for msg in true_positives:
+        assert agent._looks_like_document_request(msg) is True, f"{msg!r} should be recognized as a document question"
+
+
+def test_looks_like_document_request_excludes_unrelated_requests():
+    agent = Agent(provider=None, memory_path=False)
+    false_positives = ["add 10 and 20", "open youtube", "what is my name", "today weather"]
+    for msg in false_positives:
+        assert agent._looks_like_document_request(msg) is False, f"{msg!r} should NOT be treated as a document question"
+
+
+def test_run_routes_document_questions_to_chat_not_the_planner():
+    # Real observed bug: with tools registered, the planner hallucinated
+    # "read_clipboard" for "from pdf give me answer" and "multiply" for
+    # "give me answer of 1 to 10 question in detail" instead of
+    # recognizing neither tool applies. Prove run() never even calls the
+    # planner for these - it should go straight to chat()'s RAG path.
+    class FakeProvider:
+        def generate(self, prompt):
+            if "STRICT planner" in prompt:
+                # if this fires, the planner was wrongly invoked
+                return '[{"step": "multiply", "args": [5, 2]}]'
+            return "Answer from the syllabus document context."
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+    agent.vector_store.add_document(
+        "Q1: What is a compiler? A compiler translates source code to machine code.",
+        source="syllabus.pdf",
+    )
+
+    result = agent.run("from pdf give me answer of 1 to 10 question in detail")
+    assert result == "Answer from the syllabus document context."
 
 
 if __name__ == "__main__":

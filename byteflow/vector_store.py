@@ -86,6 +86,20 @@ class VectorStore:
 
         return len(chunks)
 
+    def has_documents(self, source_prefix=None):
+        """
+        True if the store has at least one entry. Pass `source_prefix`
+        to check for a specific kind of ingested content only (e.g.
+        entries added with source="myfile.pdf"). Used by callers that
+        want to change behavior once real document content is loaded -
+        e.g. Agent routes document-referencing questions straight to
+        chat()'s RAG-aware path instead of the tool planner once
+        something has actually been ingested.
+        """
+        if source_prefix is None:
+            return len(self.entries) > 0
+        return any(e.get("source", "").startswith(source_prefix) for e in self.entries)
+
     def search(self, query, top_k=5, min_score=0.05):
         """
         Return up to top_k chunks most relevant to `query`, sorted by

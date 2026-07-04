@@ -990,6 +990,48 @@ Examples:
         self.add_memory("assistant", answer)
         return answer
 
+    # -----------------------------
+    # DOCUMENT / PDF REFERENCE (route straight to chat()'s RAG path)
+    # -----------------------------
+    # A real observed bug: with tools registered, asking the small local
+    # planner model to pick a tool for a question about an uploaded PDF
+    # ("from pdf give me answer", "give me answer of 1 to 10 question in
+    # detail") led it to hallucinate the closest-sounding tool name
+    # instead of recognizing none applies - "read_clipboard" (returning
+    # whatever unrelated text happened to be on the clipboard) and
+    # "multiply" (returning "10" for a question that has nothing to do
+    # with arithmetic). plan() already validates tool names exist, but
+    # that doesn't stop it picking a real, registered, completely wrong
+    # tool. chat() already folds in recalled_context() - the relevant
+    # chunks of any ingested document - automatically, so these
+    # questions are answered correctly and safely by skipping the
+    # planner entirely rather than by trying to make tool-selection
+    # smarter after the fact.
+    _DOCUMENT_REFERENCE_PATTERNS = (
+        "from pdf", "from the pdf", "in the pdf", "on the pdf",
+        "from the document", "in the document", "based on the document",
+        "according to the document", "the document says",
+        "from the file", "in the file", "based on the file",
+        "from the paper", "in the paper",
+        "from the syllabus", "in the syllabus",
+        "the pdf says", "uploaded file", "uploaded pdf", "uploaded document",
+    )
+
+    def _looks_like_document_request(self, prompt):
+        p = prompt.lower()
+        if any(pattern in p for pattern in self._DOCUMENT_REFERENCE_PATTERNS):
+            return True
+        # numbered-question phrasing typical of "answer these questions
+        # from my notes/syllabus/pdf" requests - e.g. "answer of 1 to 10
+        # question in detail", "question no 3", "explain question 5"
+        if re.search(r"question\s*(no\.?|number)?\s*\d+", p):
+            return True
+        if re.search(r"\d+\s*(to|-)\s*\d+\s*questions?\b", p):
+            return True
+        if re.search(r"answer\s+(of|to|for)\s+(question|q)\b", p):
+            return True
+        return False
+
     # Phrases/patterns that strongly suggest the question needs current,
     # real-world information the model's training data can't have (the
     # model has a fixed knowledge cutoff and no built-in way to know
@@ -1163,6 +1205,16 @@ Examples:
         can be extracted, the agent asks for one; the next turn's bare
         place-name answer is reattached automatically (see
         _pending_weather_location_followup).
+
+        Questions referencing an uploaded document ("from pdf give me
+        answer", "answer question 3", "1 to 10 question in detail") are
+        routed straight to chat(), which automatically pulls in the
+        relevant chunks of any ingested document via recalled_context().
+        This fixes a real observed bug where the tool planner, faced
+        with a question no registered tool actually matches, hallucinated
+        the closest-sounding tool name instead (e.g. "read_clipboard" or
+        "multiply") and returned its irrelevant output instead of
+        answering from the document.
         """
         if not self.provider:
             return prompt
@@ -1185,6 +1237,9 @@ Examples:
 
         if self._looks_like_search_request(prompt):
             return self.chat_with_search(prompt)
+
+        if self._looks_like_document_request(prompt):
+            return self.chat(prompt)
 
         # STEP 1: PLAN
         plan = self.plan(prompt)
