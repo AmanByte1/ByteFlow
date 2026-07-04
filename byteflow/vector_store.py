@@ -100,11 +100,34 @@ class VectorStore:
             return len(self.entries) > 0
         return any(e.get("source", "").startswith(source_prefix) for e in self.entries)
 
-    def search(self, query, top_k=5, min_score=0.05):
+    def list_sources(self):
+        """
+        Return the distinct source labels currently in the store, in
+        the order they were first added. Used to match a filename the
+        user typed against what's actually been ingested (e.g. "it's on
+        Sai Aman Zakirsha.pdf" -> the real source "SAI AMAN
+        ZAKIRSHA.pdf"), and to scope search() to just one document when
+        more than one has been uploaded in the same session.
+        """
+        seen = []
+        for e in self.entries:
+            source = e.get("source", "")
+            if source not in seen:
+                seen.append(source)
+        return seen
+
+    def search(self, query, top_k=5, min_score=0.05, source=None):
         """
         Return up to top_k chunks most relevant to `query`, sorted by
         descending score. Each result is a dict:
             {"text": ..., "source": ..., "chunk_index": ..., "score": ...}
+
+        Pass `source` to restrict the search to chunks from exactly that
+        source (e.g. one specific uploaded filename) - useful once
+        multiple documents have been ingested and a question clearly
+        refers to just one of them ("this pdf", a named filename), so
+        retrieval can't blend in chunks from an unrelated document and
+        misattribute facts to the wrong file.
         """
         if not self.entries:
             return []
@@ -113,8 +136,14 @@ class VectorStore:
         if isinstance(query_vector, dict) and not query_vector:
             return []
 
+        candidates = self.entries
+        if source is not None:
+            candidates = [e for e in candidates if e["source"] == source]
+            if not candidates:
+                return []
+
         scored = []
-        for entry in self.entries:
+        for entry in candidates:
             score = self.embedder.similarity(query_vector, entry["vector"])
             if score >= min_score:
                 scored.append({

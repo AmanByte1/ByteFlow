@@ -1340,6 +1340,82 @@ def test_vector_store_has_documents():
     assert store.has_documents(source_prefix="other") is False
 
 
+def test_vector_store_search_scoped_to_source():
+    store = VectorStore()
+    store.add_document("Python credits: 3. Discrete Mathematics credits: 4.", source="examform.pdf")
+    store.add_document("Recommended book: Core Python Programming by Wesley Chun.", source="syllabus.pdf")
+
+    scoped = store.search("credits", source="examform.pdf")
+    assert len(scoped) >= 1
+    assert all(r["source"] == "examform.pdf" for r in scoped)
+
+    scoped_other = store.search("credits", source="syllabus.pdf")
+    # syllabus doesn't mention credits at all - scoping must not leak
+    # in the examform chunk just because it's a better match overall
+    assert scoped_other == [] or all(r["source"] == "syllabus.pdf" for r in scoped_other)
+
+
+def test_vector_store_list_sources_preserves_add_order():
+    store = VectorStore()
+    store.add_document("first doc", source="a.pdf")
+    store.add_document("second doc", source="b.pdf")
+    store.add_document("more from first doc", source="a.pdf")
+    assert store.list_sources() == ["a.pdf", "b.pdf"]
+
+
+def test_agent_active_document_source_defaults_to_most_recent_upload():
+    agent = Agent(provider=None, memory_path=False)
+    assert agent.active_document_source is None
+
+    agent.ingest_document("syllabus content", source="syllabus.pdf")
+    assert agent.active_document_source == "syllabus.pdf"
+
+    agent.ingest_document("exam form content", source="examform.pdf")
+    assert agent.active_document_source == "examform.pdf"
+
+
+def test_match_ingested_source_is_case_and_spacing_tolerant():
+    agent = Agent(provider=None, memory_path=False)
+    agent.ingest_document("exam form content", source="SAI AMAN ZAKIRSHA.pdf")
+
+    assert agent._match_ingested_source("it's on Sai Aman Zakirsha.pdf") == "SAI AMAN ZAKIRSHA.pdf"
+    assert agent._match_ingested_source("what's the weather today") is None
+
+
+def test_chat_scopes_retrieval_to_active_document_not_blended_across_files():
+    # Real observed bug: with two documents ingested, a credits question
+    # pulled the wrong chunk from an unrelated file and confidently cited
+    # the wrong filename as its source. Prove retrieval now stays scoped
+    # to the active document, and following a mention of another actual
+    # ingested file resets the active document to a real source
+    # (not a hallucinated matching_source when the message names
+    # neither file - it should stay a valid known source either way).
+    captured = []
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured.append(prompt)
+            return "none" if "durable fact" in prompt else "ok"
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.ingest_document(
+        "Recommended book: Core Python Programming by Wesley Chun.",
+        source="syllabus.pdf",
+    )
+    agent.ingest_document(
+        "Subject credits: Python Programming 3 credits, Discrete Mathematics 4 credits.",
+        source="examform.pdf",
+    )
+
+    captured.clear()
+    agent.chat("Discrete Mathematics, credits")
+    prompt = captured[0]
+
+    assert "examform.pdf" in prompt
+    assert "syllabus.pdf" not in prompt  # scoped search should not pull in the other file
+    assert "currently focused on the document `examform.pdf`" in prompt
+
+
 def test_vector_store_chunks_long_documents_automatically():
     store = VectorStore()
     long_doc = " ".join([f"Paragraph {i} about hiking trails." for i in range(30)])

@@ -85,6 +85,15 @@ class Agent:
             vector_store_path = f"{base}_vectors.{ext}"
         self.vector_store = VectorStore(embedder=embedder, path=vector_store_path)
 
+        # The document assumed to be meant by deictic references like
+        # "this pdf" or "from this file" when a message doesn't name a
+        # specific one - defaults to whichever document was ingested
+        # most recently (see ingest_document()). If a persisted vector
+        # store is being reloaded (continuing a past session), pick up
+        # the same default rather than starting with none.
+        sources = self.vector_store.list_sources()
+        self.active_document_source = sources[-1] if sources else None
+
         self.personality = personality
         self.learn = learn
 
@@ -108,8 +117,19 @@ class Agent:
         ingested, recalled_context() can surface the most relevant
         chunks for a given message, regardless of which part of a big
         document they came from. Returns the number of chunks added.
+
+        Newly ingested documents become the "active" document (see
+        self.active_document_source) - the one assumed to be meant by
+        deictic references like "this pdf" or "from this file" when the
+        message doesn't name a specific one. This matters once more
+        than one document has been uploaded in a session: without it,
+        a plain "give me detail from this pdf" right after uploading a
+        SECOND file has no way to know which of the (now multiple)
+        ingested documents "this" refers to.
         """
-        return self.vector_store.add_document(text, source=source)
+        n_chunks = self.vector_store.add_document(text, source=source)
+        self.active_document_source = source
+        return n_chunks
 
     # -----------------------------
     # TOOL SYSTEM
@@ -148,7 +168,27 @@ class Agent:
             f"- [{e['role']}] {e['content']}" for e in entries
         )
 
-    def recalled_context(self, query, n_recent=6, n_relevant=4, n_doc_chunks=3):
+    def _match_ingested_source(self, prompt):
+        """
+        If `prompt` mentions the name of a document that's actually been
+        ingested (loose match: case-insensitive, punctuation/spacing-
+        tolerant), return that source exactly as stored. Otherwise None.
+
+        This is what lets "it's on Sai Aman Zakirsha.pdf" correctly pin
+        the real stored source "SAI AMAN ZAKIRSHA.pdf" as the active
+        document, even though the casing doesn't match exactly.
+        """
+        p_compact = re.sub(r"[^a-z0-9]", "", prompt.lower())
+        if not p_compact:
+            return None
+        for source in self.vector_store.list_sources():
+            stem = source.rsplit(".", 1)[0]
+            stem_compact = re.sub(r"[^a-z0-9]", "", stem.lower())
+            if stem_compact and stem_compact in p_compact:
+                return source
+        return None
+
+    def recalled_context(self, query, n_recent=6, n_relevant=4, n_doc_chunks=3, prefer_source=None):
         """
         Build a richer context block than recent_context() alone: the most
         recent messages (what was just said) PLUS older messages that are
@@ -156,6 +196,17 @@ class Agent:
         they happened long ago, PLUS relevant chunks from any ingested
         documents (see ingest_document()). Deduplicates overlap between
         the memory sets.
+
+        Pass `prefer_source` (a source label from vector_store) to scope
+        document retrieval to just that one file. This matters once more
+        than one document has been ingested in a session - without it,
+        chunk search blends the most-similar chunks from EVERY uploaded
+        document together, which was a real observed bug: asked about
+        credits after uploading two different PDFs, the agent pulled
+        chunks from the wrong one and then confidently cited the wrong
+        filename as the source of the (actually unrelated) fact. If the
+        scoped search comes up empty, this falls back to an unscoped
+        search rather than returning nothing.
         """
         recent = self.memory.get_recent(n_recent)
         recent_texts = {e["content"] for e in recent}
@@ -166,7 +217,11 @@ class Agent:
             if entry["content"] not in recent_texts
         ]
 
-        doc_chunks = self.vector_store.search(query, top_k=n_doc_chunks)
+        doc_chunks = []
+        if prefer_source:
+            doc_chunks = self.vector_store.search(query, top_k=n_doc_chunks, source=prefer_source)
+        if not doc_chunks:
+            doc_chunks = self.vector_store.search(query, top_k=n_doc_chunks)
 
         lines = []
 
@@ -177,7 +232,18 @@ class Agent:
             lines.append("")
 
         if doc_chunks:
-            lines.append("Relevant excerpts from documents you've shared:")
+            sources_present = {c["source"] for c in doc_chunks}
+            if len(sources_present) > 1:
+                lines.append(
+                    "Relevant excerpts from documents you've shared - NOTE: "
+                    "these come from DIFFERENT files (shown in [brackets] "
+                    "before each one). Never mix them up or say a fact came "
+                    "from one file when it's actually labeled with another:"
+                )
+            elif prefer_source:
+                lines.append(f"Relevant excerpts from `{prefer_source}` (the document currently in focus):")
+            else:
+                lines.append("Relevant excerpts from documents you've shared:")
             for chunk in doc_chunks:
                 lines.append(f"- [{chunk['source']}] {chunk['text']}")
             lines.append("")
@@ -464,10 +530,36 @@ Return ONLY the JSON list or the literal null. No other text.
 
         self.add_memory("user", message)
 
+        # If the message names one of the ingested documents (even
+        # loosely - see _match_ingested_source), that pins it as the
+        # active document going forward, e.g. a user correcting the
+        # agent with "it's on Sai Aman Zakirsha.pdf". Otherwise, once
+        # any document has been ingested, default to whichever one is
+        # currently active (most recent upload, or last explicit
+        # correction) rather than blending chunks from every uploaded
+        # file - a real observed bug where a credits question pulled a
+        # chunk from the wrong PDF and confidently cited the wrong
+        # filename as its source.
+        matched_source = self._match_ingested_source(message)
+        if matched_source:
+            self.active_document_source = matched_source
+        prefer_source = matched_source or self.active_document_source
+
         personality_block = f"{self.personality}\n\n" if self.personality else ""
 
-        prompt = f"""{personality_block}{self.recalled_context(message)}
+        source_scope_note = ""
+        if prefer_source:
+            source_scope_note = (
+                f"\nYou are currently focused on the document `{prefer_source}`. "
+                f"If excerpts from other files also appear above, ignore them "
+                f"unless the user clearly asks about a different specific file "
+                f"by name - don't blend facts from a different file into your "
+                f"answer, and never say a fact came from `{prefer_source}` if "
+                f"it's actually labeled with a different filename above.\n"
+            )
 
+        prompt = f"""{personality_block}{self.recalled_context(message, prefer_source=prefer_source)}
+{source_scope_note}
 Answer the CURRENT message below directly and specifically. Use the
 document excerpts and conversation history above as your only source
 of truth about what has actually been said or shared - don't invent
