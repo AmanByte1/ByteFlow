@@ -18,6 +18,11 @@ instead of guessing confidently."""
 
 _UNSET = object()  # sentinel: distinguishes "argument not passed" from "passed as None"
 
+# Lazily-created, shared across all Agent instances - training is
+# deterministic given the same bundled data (see intent_data.py), so
+# there's no reason to retrain per-instance. See Agent._classify_intent().
+_shared_intent_classifier = None
+
 
 def _default_memory_path():
     return os.path.join(os.path.expanduser("~"), ".byteflow", "memory.json")
@@ -1159,7 +1164,84 @@ Examples:
 
         return False
 
-    # Phrases/patterns that strongly suggest the question needs current,
+    # -----------------------------
+    # OPEN / LAUNCH (bypass the tool planner for this common action)
+    # -----------------------------
+    # A real observed bug: "open file D:\Sem3" got routed by the tool
+    # planner to list_files (dumping every file in the folder as a raw
+    # Python list) instead of launch (which would actually open that
+    # folder). Both tools' descriptions mention "file(s)", and a small
+    # local model can't reliably tell "open this thing" from "list
+    # what's in this thing" apart from wording alone. Since "open X" /
+    # "launch X" is common and easy to recognize deterministically,
+    # it's handled directly rather than left to the planner to guess.
+    #
+    # Deliberately conservative: only fires when the message starts
+    # with the trigger word and stays short, with no words suggesting
+    # a compound/follow-up request ("open this pdf and summarize it"
+    # should NOT be treated as a bare launch target).
+    _OPEN_TRIGGER_WORDS = ("open", "launch", "start")
+    _OPEN_EXCLUDE_WORDS = (
+        "and", "then", "tell", "give", "show", "read", "summarize",
+        "summarise", "explain", "about", "detail", "details", "question",
+        "answer", "what", "who", "why", "how",
+    )
+
+    def _looks_like_open_request(self, prompt):
+        words = prompt.strip().split()
+        if len(words) < 2 or len(words) > 6:
+            return False
+        if words[0].lower() not in self._OPEN_TRIGGER_WORDS:
+            return False
+        lowered = prompt.lower()
+        if any(self._contains_word(lowered, w) for w in self._OPEN_EXCLUDE_WORDS):
+            return False
+        return True
+
+    def _extract_open_target(self, prompt):
+        parts = prompt.strip().split(None, 1)
+        return parts[1].strip() if len(parts) > 1 else ""
+
+    def _classify_intent(self, prompt):
+        """
+        Consult the trained intent classifier (see intent_classifier.py,
+        intent_data.py) as an ADDITIONAL signal, used only when none of
+        the regex-based _looks_like_*_request() checks above matched.
+        This is what catches novel phrasing/typos those checks miss by
+        construction (e.g. "today weathe ahemdabad") without replacing
+        them - the regex checks stay as the fast, deterministic first
+        line since they're free and already reliable for exact phrasing.
+
+        Returns (label, confidence). label is None if nothing clears
+        the confidence bar (see IntentClassifier.predict_confident) -
+        callers should treat that exactly like this method didn't
+        exist and fall through to whatever ran before it (the LLM
+        planner). A classifier failure of any kind is treated the same
+        way (never raises) - this is explicitly a bonus signal, not a
+        dependency the rest of run() can break on.
+        """
+        global _shared_intent_classifier
+        try:
+            from .intent_classifier import IntentClassifier
+            if _shared_intent_classifier is None:
+                _shared_intent_classifier = IntentClassifier().fit()
+            return _shared_intent_classifier.predict_confident(prompt)
+        except Exception:
+            return None, 0.0
+
+    def _answer_open_request(self, prompt):
+        from .desktop_tools import launch
+
+        self.add_memory("user", prompt)
+        target = self._extract_open_target(prompt)
+        if not target:
+            answer = "What would you like me to open?"
+        else:
+            answer = launch(target)
+        self.add_memory("assistant", str(answer))
+        return answer
+
+
     # real-world information the model's training data can't have (the
     # model has a fixed knowledge cutoff and no built-in way to know
     # today's date, recent events, current prices, etc.) - checked
@@ -1342,6 +1424,14 @@ Examples:
         the closest-sounding tool name instead (e.g. "read_clipboard" or
         "multiply") and returned its irrelevant output instead of
         answering from the document.
+
+        As a final layer before the LLM planner, a small trained intent
+        classifier (see intent_classifier.py) gets a look at anything
+        the regex checks above didn't confidently match - this is what
+        catches phrasing those checks weren't written to anticipate
+        (typos, unfamiliar word order) without replacing them. It only
+        acts when confident; low-confidence or "math" predictions fall
+        through to the planner exactly as before it existed.
         """
         if not self.provider:
             return prompt
@@ -1367,6 +1457,38 @@ Examples:
 
         if self._looks_like_document_request(prompt):
             return self.chat(prompt)
+
+        if self._looks_like_open_request(prompt):
+            return self._answer_open_request(prompt)
+
+        # Every check above is a fast, deterministic regex/keyword match
+        # on exact phrasing. If none of them fired, this message uses
+        # wording those checks weren't written to anticipate - exactly
+        # the failure mode behind several real bugs this project hit
+        # (typos like "qution", reordering like "today weathe ahemdabad").
+        # Before falling back to the LLM tool-planner (which has also
+        # been observed hallucinating wrong tools for exactly these
+        # cases), consult the trained intent classifier as one more
+        # signal. It only acts when confident; otherwise this is a
+        # no-op and behavior is unchanged from before it existed.
+        classified_label, _confidence = self._classify_intent(prompt)
+        if classified_label == "weather":
+            return self._answer_weather_request(prompt)
+        if classified_label == "document":
+            return self.chat(prompt)
+        if classified_label == "search":
+            return self.chat_with_search(prompt)
+        if classified_label == "datetime":
+            return self._answer_datetime_request(prompt)
+        if classified_label == "open":
+            return self._answer_open_request(prompt)
+        if classified_label == "chat":
+            return self.chat(prompt)
+        if classified_label == "code":
+            return self.code(prompt, execute=execute_code)
+        # classified_label == "math" or None (not confident enough):
+        # fall through unchanged - math needs the planner's structured
+        # argument extraction, and None means defer to existing behavior.
 
         # STEP 1: PLAN
         plan = self.plan(prompt)
@@ -1400,4 +1522,17 @@ Examples:
                 results.append(f"Tool not found: {tool_name}")
 
         # STEP 3: RETURN RESULT
-        return results
+        #
+        # A real, longstanding bug: this used to return `results` as a
+        # raw Python list, so a single successful tool call showed up
+        # to the user as literal bracket-and-quote text like
+        # "['Launched: vscode (code)']" instead of a plain sentence.
+        # The overwhelmingly common case is exactly one tool call per
+        # plan, so unwrap that case to a plain string; only a genuine
+        # multi-step plan gets the numbered-list treatment, and even
+        # that reads as normal text rather than a Python repr.
+        if not results:
+            return "Done, but there was nothing to report back."
+        if len(results) == 1:
+            return results[0]
+        return "\n".join(f"{i + 1}. {r}" for i, r in enumerate(results))

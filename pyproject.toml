@@ -22,6 +22,7 @@ clipboard = ["pyperclip"]
 voice = ["pyttsx3", "vosk", "sounddevice"]
 embeddings = ["sentence-transformers"]
 documents = ["pypdf", "python-docx"]
+intents = ["scikit-learn"]
 
 [tool.setuptools]
 packages = ["byteflow", "byteflow.providers"]

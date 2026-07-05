@@ -495,5 +495,82 @@ def companion(model, memory_path, no_desktop_tools, voice_input, voice_output, v
     )
 
 
+@click.group()
+def intents():
+    """
+    Inspect and improve the intent classifier (see intent_classifier.py)
+    that helps route messages like "today weathe ahemdabad" or "open
+    file D:\\Sem3" correctly even with typos/unusual phrasing.
+    """
+    pass
+
+
+@intents.command(name="evaluate")
+def intents_evaluate():
+    """
+    Honest generalization check: train on synthetic/augmented examples
+    only, test on the real observed-bug phrases the model never saw
+    verbatim, and print accuracy plus precision-when-confident (the
+    metric that actually matters, since a low-confidence guess never
+    overrides the existing routing - see IntentClassifier.predict_confident).
+    """
+    from .intent_classifier import evaluate_generalization
+    evaluate_generalization(verbose=True)
+
+
+@intents.command(name="add")
+@click.argument("text")
+@click.argument("label")
+def intents_add(text, label):
+    """
+    Record a real correction for future retraining, e.g.:
+
+        byteflow intents add "today waether ahemdabad" weather
+
+    This is how the classifier actually improves over time: the next
+    process that trains it (agent.py fits one shared classifier per
+    process on startup) will automatically include this example
+    alongside the bundled dataset - no code changes needed. Label must
+    be one of the existing categories (run with no args to see them).
+    """
+    from .intent_data import LABELS
+    from .intent_feedback import add_feedback_example
+
+    try:
+        total = add_feedback_example(text, label)
+    except ValueError as e:
+        click.echo(f"Error: {e}")
+        raise SystemExit(1)
+
+    click.echo(f"Saved. {total} feedback example(s) recorded so far.")
+    click.echo(f"(Known labels: {', '.join(LABELS)})")
+
+
+@intents.command(name="list-feedback")
+def intents_list_feedback():
+    """Show every real correction recorded so far via `byteflow intents add`."""
+    from .intent_feedback import load_feedback_examples
+
+    examples = load_feedback_examples()
+    if not examples:
+        click.echo("No feedback examples recorded yet. Add one with:\n  byteflow intents add \"<text>\" <label>")
+        return
+    for text, label in examples:
+        click.echo(f"[{label}] {text}")
+    click.echo(f"\n{len(examples)} total.")
+
+
+@intents.command(name="clear-feedback")
+@click.confirmation_option(prompt="Delete all recorded feedback examples? This won't touch the built-in training data.")
+def intents_clear_feedback():
+    """Delete all feedback examples added via `byteflow intents add`."""
+    from .intent_feedback import clear_feedback
+    clear_feedback()
+    click.echo("Cleared.")
+
+
+cli.add_command(intents)
+
+
 if __name__ == "__main__":
     cli()

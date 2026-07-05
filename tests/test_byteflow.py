@@ -319,7 +319,7 @@ def test_run_still_uses_real_tools_for_clear_requests():
     agent = Agent(provider=provider)
     agent.register_tool(Tool("add", lambda a, b: a + b))
     result = agent.run("add 10 and 20")
-    assert result == [30]
+    assert result == 30
 
 
 def test_list_files_has_sensible_default_when_folder_omitted():
@@ -2394,6 +2394,349 @@ def test_run_routes_document_questions_to_chat_not_the_planner():
 
     result = agent.run("from pdf give me answer of 1 to 10 question in detail")
     assert result == "Answer from the syllabus document context."
+
+
+# -----------------------------
+# OPEN / LAUNCH REQUEST ROUTING (bypass the ambiguous tool planner)
+# -----------------------------
+
+def test_looks_like_open_request_catches_open_and_launch_phrasing():
+    agent = Agent(provider=None, memory_path=False)
+    true_positives = [
+        r"open file D:\Sem3",
+        "open youtube",
+        "launch vscode",
+        "start notepad",
+    ]
+    for msg in true_positives:
+        assert agent._looks_like_open_request(msg) is True, f"{msg!r} should be recognized as an open request"
+
+
+def test_looks_like_open_request_excludes_compound_requests():
+    # Real observed bug: "open file D:\Sem3" was correctly meant as a
+    # launch request, but overly broad detection could wrongly capture
+    # something like "open this pdf and summarize it", which is a
+    # document question, not a bare launch target.
+    agent = Agent(provider=None, memory_path=False)
+    false_positives = [
+        "open this pdf and summarize it",
+        "open the syllabus and tell me about unit 3",
+        "what time does the store open",
+        "add 10 and 20",
+    ]
+    for msg in false_positives:
+        assert agent._looks_like_open_request(msg) is False, f"{msg!r} should NOT be treated as a bare open/launch request"
+
+
+def test_extract_open_target_strips_trigger_word():
+    agent = Agent(provider=None, memory_path=False)
+    assert agent._extract_open_target(r"open file D:\Sem3") == r"file D:\Sem3"
+    assert agent._extract_open_target("launch vscode") == "vscode"
+
+
+def test_run_routes_open_request_to_launch_not_list_files():
+    # Real observed bug: the tool planner routed "open file D:\Sem3" to
+    # list_files (dumping every file in the folder as a raw list)
+    # instead of launch (which actually opens the folder). Prove run()
+    # calls the real launch() function directly, bypassing the planner.
+    from unittest.mock import patch
+
+    class FakeProvider:
+        def generate(self, prompt):
+            # if this fires, the planner was wrongly invoked
+            return '[{"step": "list_files", "args": ["D:\\\\Sem3"]}]'
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+
+    with patch("byteflow.desktop_tools.launch", return_value="Launched: D:\\Sem3") as mock_launch:
+        result = agent.run(r"open file D:\Sem3")
+
+    mock_launch.assert_called_once_with(r"file D:\Sem3")
+    assert result == "Launched: D:\\Sem3"
+
+
+# -----------------------------
+# TOOL RESULT FORMATTING (no raw Python list dumps)
+# -----------------------------
+
+def test_run_unwraps_single_tool_result_instead_of_returning_a_list():
+    # Real, longstanding bug: a single successful tool call used to come
+    # back as a raw Python list, so the user saw literal bracket/quote
+    # text like "['Launched: vscode (code)']" instead of a plain sentence.
+    provider = _FakeProvider('[{"step": "add", "args": [10, 20]}]')
+    agent = Agent(provider=provider)
+    agent.register_tool(Tool("add", lambda a, b: a + b))
+    result = agent.run("add 10 and 20")
+    assert result == 30
+    assert not isinstance(result, list)
+
+
+def test_run_formats_multi_step_results_as_readable_text():
+    provider = _FakeProvider(
+        '[{"step": "add", "args": [10, 20]}, {"step": "multiply", "args": [2, 3]}]'
+    )
+    agent = Agent(provider=provider)
+    agent.register_tool(Tool("add", lambda a, b: a + b))
+    agent.register_tool(Tool("multiply", lambda a, b: a * b))
+    result = agent.run("add 10 and 20, then multiply 2 and 3")
+    assert result == "1. 30\n2. 6"
+
+
+# -----------------------------
+# INTENT CLASSIFIER (ML-based fallback for phrasing the regex checks miss)
+# -----------------------------
+
+def test_intent_classifier_fits_and_predicts_known_categories():
+    from byteflow.intent_classifier import IntentClassifier
+    clf = IntentClassifier().fit()
+    assert clf.backend in ("sklearn", "centroid")
+
+    label, confidence = clf.predict("today weathe ahemdabad")
+    assert label == "weather"
+    assert 0.0 <= confidence <= 1.0
+
+
+def test_intent_classifier_predict_confident_abstains_on_low_confidence():
+    from byteflow.intent_classifier import IntentClassifier
+    clf = IntentClassifier().fit()
+
+    label, confidence = clf.predict_confident("asdkj qwoeiu random gibberish zzz")
+    assert label is None
+
+
+def test_intent_classifier_predict_confident_returns_label_when_confident():
+    from byteflow.intent_classifier import IntentClassifier
+    clf = IntentClassifier().fit()
+
+    # A real historical bug from this project: this exact typo'd phrase
+    # ("todsy" for "today") slipped past every regex check because typos
+    # can't be enumerated in advance - the whole reason this classifier
+    # exists. Confirm it's now confidently and correctly caught.
+    label, confidence = clf.predict_confident("todsy football match")
+    assert label == "search"
+
+
+def test_intent_classifier_evaluate_generalization_meets_minimum_bar():
+    # Regression guard: if intent_data.py's training set changes in a
+    # way that tanks real-world generalization, this should fail loudly
+    # rather than silently ship a much worse classifier.
+    from byteflow.intent_classifier import evaluate_generalization
+    result = evaluate_generalization()
+    assert result["total"] > 0
+    assert result["accuracy"] >= 0.5, (
+        f"Generalization accuracy dropped to {result['accuracy']:.1%} "
+        f"(misclassified: {result['misclassified']})"
+    )
+
+
+def test_intent_data_labels_match_get_training_examples():
+    from byteflow.intent_data import TRAINING_DATA, LABELS, get_training_examples
+    assert LABELS == sorted(TRAINING_DATA.keys())
+
+    examples = get_training_examples()
+    assert len(examples) > 0
+    assert all(label in LABELS for _, label in examples)
+
+    seed_only = get_training_examples(include_augmented=False)
+    assert len(seed_only) < len(examples)
+
+
+def test_agent_classify_intent_uses_shared_classifier():
+    agent = Agent(provider=None, memory_path=False)
+    label, confidence = agent._classify_intent("todsy football match")
+    assert label == "search"
+
+
+def test_agent_classify_intent_never_raises_on_failure():
+    agent = Agent(provider=None, memory_path=False)
+    import byteflow.agent as agent_module
+
+    original = agent_module._shared_intent_classifier
+    try:
+        class BrokenClassifier:
+            def predict_confident(self, text):
+                raise RuntimeError("boom")
+        agent_module._shared_intent_classifier = BrokenClassifier()
+
+        label, confidence = agent._classify_intent("anything")
+        assert label is None
+        assert confidence == 0.0
+    finally:
+        agent_module._shared_intent_classifier = original
+
+
+def test_intent_classifier_centroid_fallback_works_without_sklearn():
+    # The user's actual runtime may not have scikit-learn installed -
+    # confirm the pure-stdlib fallback (reusing the TfidfEmbedder
+    # already in embeddings.py) works correctly on its own, not just
+    # whichever backend happens to be installed in CI.
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "sklearn" or name.startswith("sklearn."):
+            raise ImportError("simulated: sklearn not installed")
+        return real_import(name, *args, **kwargs)
+
+    builtins.__import__ = fake_import
+    try:
+        from byteflow.intent_classifier import IntentClassifier
+        clf = IntentClassifier()
+        assert clf.backend == "centroid"
+        clf.fit()
+        label, confidence = clf.predict_confident("todsy football match")
+        assert label == "search"
+    finally:
+        builtins.__import__ = real_import
+
+
+def test_run_uses_intent_classifier_to_catch_typo_the_planner_would_mishandle():
+    # End-to-end: "todsy football match" matches none of the regex
+    # checks (it's a genuine typo), so without the classifier this
+    # would have gone to the LLM planner - which, per this project's
+    # history, is exactly where things like this got mishandled before.
+    # Prove the classifier intercepts it and the planner is never
+    # called at all.
+    class FakeProvider:
+        def generate(self, prompt):
+            raise AssertionError("planner should never be invoked for this prompt")
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+
+    def fake_chat_with_search(message, max_results=4):
+        return f"[search handled]: {message}"
+    agent.chat_with_search = fake_chat_with_search
+
+    result = agent.run("todsy football match")
+    assert result == "[search handled]: todsy football match"
+
+
+def test_run_falls_through_to_planner_when_classifier_not_confident():
+    # Low-confidence/no-match classifications must not change behavior
+    # at all - the planner should still run exactly as before.
+    provider = _FakeProvider('[{"step": "add", "args": [10, 20]}]')
+    agent = Agent(provider=provider)
+    agent.register_tool(Tool("add", lambda a, b: a + b))
+
+    import byteflow.agent as agent_module
+    original = agent_module._shared_intent_classifier
+    try:
+        class AbstainingClassifier:
+            def predict_confident(self, text):
+                return None, 0.0
+        agent_module._shared_intent_classifier = AbstainingClassifier()
+
+        result = agent.run("add 10 and 20")
+        assert result == 30
+    finally:
+        agent_module._shared_intent_classifier = original
+
+
+# -----------------------------
+# INTENT FEEDBACK (growing the classifier from real corrections)
+# -----------------------------
+
+def test_add_feedback_example_persists_and_validates_label():
+    import tempfile
+    from byteflow.intent_feedback import add_feedback_example, load_feedback_examples
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/feedback.json"
+
+        raised = False
+        try:
+            add_feedback_example("some text", "not_a_real_label", path=path)
+        except ValueError:
+            raised = True
+        assert raised, "expected ValueError for an unknown label"
+
+        count = add_feedback_example("today waether ahemdabad", "weather", path=path)
+        assert count == 1
+
+        examples = load_feedback_examples(path=path)
+        assert examples == [("today waether ahemdabad", "weather")]
+
+
+def test_feedback_examples_survive_corrupt_file():
+    import tempfile, os as _os
+    from byteflow.intent_feedback import load_feedback_examples, add_feedback_example
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/feedback.json"
+        with open(path, "w") as f:
+            f.write("{not valid json")
+
+        # a corrupt file degrades to "no feedback yet", never crashes
+        assert load_feedback_examples(path=path) == []
+
+        # and can still be written to fresh afterward
+        add_feedback_example("open my project folder", "open", path=path)
+        assert load_feedback_examples(path=path) == [("open my project folder", "open")]
+
+
+def test_clear_feedback_removes_file_but_not_builtin_data():
+    import tempfile
+    from byteflow.intent_feedback import add_feedback_example, load_feedback_examples, clear_feedback
+    from byteflow.intent_data import LABELS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/feedback.json"
+        add_feedback_example("some text", "chat", path=path)
+        assert load_feedback_examples(path=path) != []
+
+        clear_feedback(path=path)
+        assert load_feedback_examples(path=path) == []
+        # built-in labels are untouched by clearing feedback
+        assert "chat" in LABELS
+
+
+def test_intent_classifier_fit_merges_feedback_examples_automatically():
+    # This is the actual "improves over time" guarantee: a recorded
+    # correction, once added, changes what the next .fit() (no args)
+    # produces - without any code changes.
+    import tempfile
+    from unittest.mock import patch
+    from byteflow.intent_classifier import IntentClassifier
+    from byteflow.intent_feedback import add_feedback_example
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/feedback.json"
+        add_feedback_example("zzqx made up phrase", "weather", path=path)
+
+        with patch("byteflow.intent_feedback._default_feedback_path", return_value=path):
+            clf = IntentClassifier().fit()
+            label, confidence = clf.predict("zzqx made up phrase")
+            assert label == "weather"
+
+
+def test_cli_intents_add_and_list_feedback(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from byteflow.cli import cli
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["intents", "add", "today waether ahemdabad", "weather"])
+    assert result.exit_code == 0
+    assert "Saved" in result.output
+
+    result = runner.invoke(cli, ["intents", "list-feedback"])
+    assert result.exit_code == 0
+    assert "today waether ahemdabad" in result.output
+
+
+def test_cli_intents_add_rejects_unknown_label(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from byteflow.cli import cli
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["intents", "add", "some text", "not_a_real_label"])
+    assert result.exit_code != 0
+    assert "Unknown label" in result.output
 
 
 if __name__ == "__main__":
