@@ -2739,6 +2739,193 @@ def test_cli_intents_add_rejects_unknown_label(tmp_path, monkeypatch):
     assert "Unknown label" in result.output
 
 
+# -----------------------------
+# EXTENSION SYSTEM (auto-discover/load folders as plugins)
+# -----------------------------
+
+def _write_extension(base_dir, name, entry_point_code):
+    import os
+    folder = os.path.join(base_dir, name)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "byteflow_plugin.py"), "w") as f:
+        f.write(entry_point_code)
+    return folder
+
+
+_WORKING_EXTENSION_CODE = """
+from byteflow.plugin import Plugin
+from byteflow.tools import Tool
+
+def _echo(text="hi"):
+    return f"echo: {text}"
+
+class _P(Plugin):
+    def setup(self, agent):
+        agent.register_tool(Tool("test_echo", _echo, "echoes input"))
+
+def get_plugin():
+    return _P("test_extension")
+"""
+
+
+def test_discover_extension_folders_finds_only_valid_entry_points():
+    import tempfile
+    from byteflow.extension_loader import discover_extension_folders
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_extension(tmp, "valid_one", _WORKING_EXTENSION_CODE)
+        import os
+        os.makedirs(os.path.join(tmp, "not_an_extension"), exist_ok=True)  # no entry point
+
+        found = discover_extension_folders(tmp)
+        names = [os.path.basename(f) for f in found]
+        assert names == ["valid_one"]
+
+
+def test_discover_extension_folders_handles_missing_directory():
+    from byteflow.extension_loader import discover_extension_folders
+    assert discover_extension_folders("/nonexistent/path/xyz") == []
+
+
+def test_load_extension_registers_tool_onto_agent():
+    import tempfile
+    from byteflow.extension_loader import load_extension
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = _write_extension(tmp, "working_ext", _WORKING_EXTENSION_CODE)
+        agent = Agent(provider=None, memory_path=False)
+
+        report = load_extension(folder, agent)
+
+        assert report["status"] == "loaded"
+        assert report["error"] is None
+        assert "test_echo" in agent.tools
+        assert agent.tools["test_echo"].run("hello") == "echo: hello"
+
+
+def test_load_extension_reports_missing_entry_point():
+    import tempfile
+    from byteflow.extension_loader import load_extension
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = f"{tmp}/no_entry_point"
+        import os
+        os.makedirs(folder)
+        agent = Agent(provider=None, memory_path=False)
+
+        report = load_extension(folder, agent)
+        assert report["status"] == "failed"
+        assert "No byteflow_plugin.py" in report["error"]
+
+
+def test_load_extension_reports_missing_get_plugin_function():
+    import tempfile
+    from byteflow.extension_loader import load_extension
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = _write_extension(tmp, "no_get_plugin", "x = 1\n")
+        agent = Agent(provider=None, memory_path=False)
+
+        report = load_extension(folder, agent)
+        assert report["status"] == "failed"
+        assert "get_plugin" in report["error"]
+
+
+def test_load_extension_reports_missing_dependency_without_crashing():
+    import tempfile
+    from byteflow.extension_loader import load_extension
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = _write_extension(
+            tmp, "missing_dep",
+            "import totally_nonexistent_package_xyz\ndef get_plugin(): pass\n",
+        )
+        agent = Agent(provider=None, memory_path=False)
+
+        report = load_extension(folder, agent)
+        assert report["status"] == "failed"
+        assert "totally_nonexistent_package_xyz" in report["error"]
+
+
+def test_load_all_extensions_isolates_failures_and_keeps_going():
+    # A real guarantee this system depends on: one broken extension
+    # must never prevent a working one (loaded earlier OR later) from
+    # loading successfully.
+    import tempfile
+    from byteflow.extension_loader import load_all_extensions
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_extension(tmp, "a_working_ext", _WORKING_EXTENSION_CODE)
+        _write_extension(tmp, "z_broken_ext", "def get_plugin():\n    raise RuntimeError('boom')\n")
+
+        agent = Agent(provider=None, memory_path=False)
+        reports = load_all_extensions(agent, extensions_dir=tmp)
+
+        statuses = {r["name"]: r["status"] for r in reports}
+        assert statuses["a_working_ext"] == "loaded"
+        assert statuses["z_broken_ext"] == "failed"
+        assert "test_echo" in agent.tools
+
+
+def test_load_all_extensions_supports_extra_paths_outside_extensions_dir():
+    import tempfile
+    from byteflow.extension_loader import load_all_extensions
+
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
+        # extensions_dir is empty; the real extension lives entirely
+        # outside it (simulating a sibling project like DataLab)
+        outside_folder = _write_extension(elsewhere, "outside_ext", _WORKING_EXTENSION_CODE)
+
+        agent = Agent(provider=None, memory_path=False)
+        reports = load_all_extensions(agent, extensions_dir=tmp, extra_paths=[outside_folder])
+
+        assert len(reports) == 1
+        assert reports[0]["status"] == "loaded"
+        assert "test_echo" in agent.tools
+
+
+def test_example_hello_builtin_extension_actually_loads():
+    # The shipped example extension (byteflow/extensions/example_hello)
+    # must always load successfully - it has no external dependencies,
+    # so a failure here means the extension mechanism itself is broken,
+    # not a missing pip package.
+    from byteflow.extension_loader import load_all_extensions
+
+    agent = Agent(provider=None, memory_path=False)
+    reports = load_all_extensions(agent)
+
+    example_reports = [r for r in reports if r["name"] == "example_hello"]
+    assert len(example_reports) == 1
+    assert example_reports[0]["status"] == "loaded"
+    assert "example_hello" in agent.tools
+
+
+def test_cli_extensions_list_shows_builtin_example(monkeypatch, tmp_path):
+    from click.testing import CliRunner
+    from byteflow.cli import cli
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["extensions", "list"])
+    assert result.exit_code == 0
+    assert "example_hello" in result.output
+
+
+def test_cli_extensions_check_loads_and_reports(monkeypatch, tmp_path):
+    from click.testing import CliRunner
+    from byteflow.cli import cli
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["extensions", "check"])
+    assert result.exit_code == 0
+    assert "loaded: example_hello" in result.output
+
+
 if __name__ == "__main__":
     # allow running without pytest installed
     test_fns = [v for k, v in list(globals().items()) if k.startswith("test_")]

@@ -16,6 +16,27 @@ def _ensure_memory_dir(path):
         os.makedirs(directory, exist_ok=True)
 
 
+def _load_extensions(agent, skip_default=False, extra_paths=None):
+    """
+    Load extensions onto `agent` and print a one-line status per
+    extension (loaded or failed-with-reason) - visibility matters here
+    since a silently-failed extension (missing dependency, etc) would
+    otherwise look identical to "there was nothing to load".
+    """
+    from .extension_loader import load_all_extensions, default_extensions_dir
+
+    extensions_dir = None if skip_default else default_extensions_dir()
+    reports = load_all_extensions(agent, extensions_dir=extensions_dir, extra_paths=extra_paths)
+
+    for r in reports:
+        if r["status"] == "loaded":
+            click.echo(f"[extension] loaded: {r['name']}")
+        else:
+            click.echo(f"[extension] failed: {r['name']} - {r['error']}")
+
+    return reports
+
+
 @click.group()
 def cli():
     """
@@ -101,7 +122,19 @@ def code(request, model, memory_path, execute, timeout, no_learn):
     help="Register desktop helper tools (launch apps/files, list/search folders, "
          "clipboard, organize files). Off by default - these can touch your filesystem.",
 )
-def run(prompt, model, memory_path, no_builtin_tools, enable_desktop_tools):
+@click.option(
+    "--no-extensions",
+    is_flag=True,
+    help="Don't auto-load extensions from byteflow/extensions/ (see extension_loader.py).",
+)
+@click.option(
+    "--extension-path",
+    multiple=True,
+    help="Also load an extension from this folder, even if it's outside "
+         "byteflow/extensions/ (e.g. a sibling project like DataLab). "
+         "Repeatable: --extension-path X --extension-path Y",
+)
+def run(prompt, model, memory_path, no_builtin_tools, enable_desktop_tools, no_extensions, extension_path):
     """Run the ByteFlow agent (planner + tools, falls back to chat)."""
     memory_path = None if memory_path.lower() == "none" else memory_path
     if memory_path:
@@ -112,6 +145,8 @@ def run(prompt, model, memory_path, no_builtin_tools, enable_desktop_tools):
         register_builtin_tools(agent)
     if enable_desktop_tools:
         register_desktop_tools(agent)
+    if not no_extensions or extension_path:
+        _load_extensions(agent, skip_default=no_extensions, extra_paths=extension_path)
 
     result = agent.run(prompt)
 
@@ -452,7 +487,19 @@ def open_(target, show_list):
     help="Hands-free continuous listening - auto-detects when you start/stop talking, "
          "no clicking per utterance (requires 'vosk'+'sounddevice' and a downloaded model).",
 )
-def companion(model, memory_path, no_desktop_tools, voice_input, voice_output, voice, conversation_mode):
+@click.option(
+    "--no-extensions",
+    is_flag=True,
+    help="Don't auto-load extensions from byteflow/extensions/ (see extension_loader.py).",
+)
+@click.option(
+    "--extension-path",
+    multiple=True,
+    help="Also load an extension from this folder (e.g. a sibling project like DataLab). "
+         "Repeatable: --extension-path X --extension-path Y",
+)
+def companion(model, memory_path, no_desktop_tools, voice_input, voice_output, voice, conversation_mode,
+              no_extensions, extension_path):
     """
     Launch the ByteFlow desktop companion - a small always-on-top robot
     character. Click it to open a chat panel, drag it to move it, or
@@ -485,6 +532,8 @@ def companion(model, memory_path, no_desktop_tools, voice_input, voice_output, v
     register_builtin_tools(agent)
     if not no_desktop_tools:
         register_desktop_tools(agent)
+    if not no_extensions or extension_path:
+        _load_extensions(agent, skip_default=no_extensions, extra_paths=extension_path)
 
     from .companion import run_companion
     run_companion(
@@ -570,6 +619,66 @@ def intents_clear_feedback():
 
 
 cli.add_command(intents)
+
+
+@click.group()
+def extensions():
+    """
+    Inspect ByteFlow's extension system (see extension_loader.py) - any
+    folder with a byteflow_plugin.py can be auto-loaded to add tools,
+    without editing ByteFlow's own code. See byteflow/extensions/README.md.
+    """
+    pass
+
+
+@extensions.command(name="list")
+@click.option(
+    "--extension-path",
+    multiple=True,
+    help="Also check this folder, even if it's outside byteflow/extensions/.",
+)
+def extensions_list(extension_path):
+    """
+    Show every extension that WOULD be loaded (from byteflow/extensions/
+    plus any --extension-path given), without actually loading them -
+    a dry run, safe to use even for extensions with heavy/missing
+    dependencies since nothing is imported yet.
+    """
+    from .extension_loader import discover_extension_folders, default_extensions_dir
+
+    folders = discover_extension_folders(default_extensions_dir())
+    folders += [os.path.abspath(p) for p in extension_path]
+
+    if not folders:
+        click.echo("No extensions found. See byteflow/extensions/README.md to add one.")
+        return
+
+    for folder in folders:
+        click.echo(folder)
+    click.echo(f"\n{len(folders)} extension(s) found (not loaded - use `byteflow run --extension-path ...` "
+               f"or load_all_extensions() in code to actually load them).")
+
+
+@extensions.command(name="check")
+@click.option(
+    "--extension-path",
+    multiple=True,
+    help="Also check this folder, even if it's outside byteflow/extensions/.",
+)
+def extensions_check(extension_path):
+    """
+    Actually load every discovered extension onto a throwaway agent
+    (no memory persisted) and report which succeeded or failed and
+    why - the real test of whether an extension works, since `list`
+    alone can't catch a missing dependency or a bug in setup().
+    """
+    agent = Agent(provider=None, memory_path=False)
+    reports = _load_extensions(agent, extra_paths=extension_path)
+    if not reports:
+        click.echo("No extensions found. See byteflow/extensions/README.md to add one.")
+
+
+cli.add_command(extensions)
 
 
 if __name__ == "__main__":
