@@ -420,7 +420,7 @@ def test_chat_automatically_learns_and_recalls_facts():
     assert "User's name is Aman" in agent.profile.all_facts()
 
     # the fact should now show up in recalled_context for future prompts
-    context = agent.recalled_context("what's my name?")
+    context, _ = agent.recalled_context("what's my name?")
     assert "User's name is Aman" in context
 
 
@@ -1509,15 +1509,17 @@ def test_agent_recalled_context_includes_relevant_document_chunks():
     long_doc += " The deployment credentials are in vault key projectx-prod."
     agent.ingest_document(long_doc, source="deploy_notes.txt")
 
-    context = agent.recalled_context("where are the deployment credentials?")
+    context, found_doc_chunk = agent.recalled_context("where are the deployment credentials?")
     assert "deploy_notes.txt" in context
     assert "projectx-prod" in context
+    assert found_doc_chunk is True
 
 
 def test_agent_recalled_context_without_documents_has_no_document_section():
     agent = Agent(provider=None, memory_path=False)
-    context = agent.recalled_context("hello")
+    context, found_doc_chunk = agent.recalled_context("hello")
     assert "documents you've shared" not in context
+    assert found_doc_chunk is False
 
 
 # -----------------------------
@@ -2924,6 +2926,126 @@ def test_cli_extensions_check_loads_and_reports(monkeypatch, tmp_path):
     result = runner.invoke(cli, ["extensions", "check"])
     assert result.exit_code == 0
     assert "loaded: example_hello" in result.output
+
+
+# -----------------------------
+# PLANNER ARGUMENT-ARITY VALIDATION (rejects hallucinated tool calls)
+# -----------------------------
+
+def test_plan_includes_tool_descriptions_not_just_bare_names():
+    # Real observed bug: with only bare tool names shown, the planner
+    # hallucinated multiply("car_data_clean_report") - stuffing one
+    # tool's name in as another tool's argument. Prove the prompt sent
+    # to the model actually includes descriptions now.
+    captured = {}
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured["prompt"] = prompt
+            return "null"
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.register_tool(Tool("car_data_clean_report", lambda: "report",
+                              "cleans car data and reports what changed, takes no arguments"))
+    agent.plan("some goal")
+
+    assert "cleans car data and reports what changed" in captured["prompt"]
+
+
+def test_args_fit_tool_signature_rejects_wrong_arity():
+    agent = Agent(provider=None, memory_path=False)
+    multiply_tool = Tool("multiply", lambda a, b: a * b, "multiplies two numbers")
+    report_tool = Tool("car_data_clean_report", lambda: "report", "takes no arguments")
+
+    # the exact real observed hallucination: 1 string arg to a 2-arg function
+    assert agent._args_fit_tool_signature(multiply_tool, ["car_data_clean_report"]) is False
+    assert agent._args_fit_tool_signature(multiply_tool, [3, 4]) is True
+    assert agent._args_fit_tool_signature(report_tool, []) is True
+    assert agent._args_fit_tool_signature(report_tool, ["unexpected"]) is False
+
+
+def test_plan_rejects_a_step_with_hallucinated_argument_count():
+    class HallucinatingProvider:
+        def generate(self, prompt):
+            # a real tool name, but arguments that don't fit its signature
+            return '[{"step": "multiply", "args": ["car_data_clean_report"]}]'
+
+    agent = Agent(provider=HallucinatingProvider(), memory_path=False)
+    agent.register_tool(Tool("multiply", lambda a, b: a * b, "multiplies two numbers"))
+
+    result = agent.plan("give current rate of each car")
+    assert result is None  # rejected entirely, not partially executed
+
+
+def test_run_falls_back_gracefully_instead_of_raw_tool_exception():
+    # Full end-to-end reproduction of the real observed bug: the exact
+    # hallucinated plan must no longer surface a raw Python exception
+    # like "[Tool Error - multiply]: could not convert string to float:
+    # 'car_data_clean_report'" to the user.
+    class HallucinatingThenNormalProvider:
+        def generate(self, prompt):
+            if "durable fact" in prompt:
+                return "none"
+            if "STRICT planner" in prompt or "tool-selection engine" in prompt:
+                return '[{"step": "multiply", "args": ["car_data_clean_report"]}]'
+            return "A normal chat answer."
+
+    agent = Agent(provider=HallucinatingThenNormalProvider(), memory_path=False)
+    agent.register_tool(Tool("multiply", lambda a, b: float(a) * float(b), "multiplies two numbers"))
+    agent.register_tool(Tool("car_data_clean_report", lambda: "report", "takes no arguments"))
+
+    result = agent.run("give current rate of each car with future price prediction")
+    assert "Tool Error" not in result
+    assert "could not convert" not in result
+
+
+# -----------------------------
+# DOCUMENT-FOCUS FRAMING (only when actually relevant to the CURRENT message)
+# -----------------------------
+
+def test_chat_does_not_mention_document_focus_for_unrelated_message():
+    # Real observed bug: chat() announced "you are currently focused on
+    # the document SAI AMAN ZAKIRSHA.pdf" for a message about car price
+    # prediction that had nothing to do with that PDF at all, just
+    # because a document had been uploaded earlier in the session.
+    captured = []
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured.append(prompt)
+            return "none" if "durable fact" in prompt else "answer"
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.vector_store.add_document(
+        "Course syllabus: Discrete Mathematics has 4 credits.", source="SAI AMAN ZAKIRSHA.pdf"
+    )
+    agent.active_document_source = "SAI AMAN ZAKIRSHA.pdf"
+
+    agent.chat("give me the current rate of each car with future price prediction")
+
+    assert "currently focused on the document" not in captured[0]
+
+
+def test_chat_does_mention_document_focus_when_actually_relevant():
+    # The flip side - this framing should still appear when a chunk
+    # relevant to the CURRENT message really was found, so the earlier
+    # cross-document-scoping fix isn't broken by this change.
+    captured = []
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured.append(prompt)
+            return "none" if "durable fact" in prompt else "answer"
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.vector_store.add_document(
+        "Course syllabus: Discrete Mathematics has 4 credits.", source="SAI AMAN ZAKIRSHA.pdf"
+    )
+    agent.active_document_source = "SAI AMAN ZAKIRSHA.pdf"
+
+    agent.chat("Discrete Mathematics, credits")
+
+    assert "currently focused on the document" in captured[0]
 
 
 if __name__ == "__main__":

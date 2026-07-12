@@ -212,6 +212,16 @@ class Agent:
         filename as the source of the (actually unrelated) fact. If the
         scoped search comes up empty, this falls back to an unscoped
         search rather than returning nothing.
+
+        Returns (context_text, found_doc_chunks) - the second element is
+        True only if a document chunk relevant to THIS SPECIFIC query
+        was actually found, not just "a document exists somewhere in
+        the session". This is what a caller (see chat()) should check
+        before framing a reply around "the document currently in
+        focus" - a real observed bug had chat() announce it was
+        "focused on" a previously-uploaded PDF for messages that had
+        nothing to do with it at all, just because some document had
+        been uploaded at some earlier point in the same session.
         """
         recent = self.memory.get_recent(n_recent)
         recent_texts = {e["content"] for e in recent}
@@ -264,7 +274,7 @@ class Agent:
         else:
             lines.append("(no prior messages)")
 
-        return "\n".join(lines)
+        return "\n".join(lines), bool(doc_chunks)
 
     # -----------------------------
     # LEARNING (FACT EXTRACTION)
@@ -374,7 +384,7 @@ that makes sense (e.g. a math question -> a short script that prints
 the result), unless the request is purely conceptual.
 
 Context from earlier conversation:
-{self.recalled_context(request)}
+{self.recalled_context(request)[0]}
 
 Request:
 {request}
@@ -459,13 +469,27 @@ single fenced Python code block:
             # no tools registered at all - nothing for a plan to call
             return None
 
+        # A real observed bug: with only bare tool names shown, the
+        # planner had no idea what each tool does or expects, and
+        # ended up calling multiply("car_data_clean_report") - stuffing
+        # one tool's NAME in as another tool's argument. Once there
+        # were enough tools (built-ins + an extension's), bare names
+        # alone stopped being enough context for a small local model
+        # to keep straight. Showing name AND description for each tool
+        # gives it something real to match the goal against.
+        tool_descriptions = "\n".join(
+            f"  - {name}: {tool.description or '(no description)'}"
+            for name, tool in self.tools.items()
+        )
+
         prompt = f"""
 You are a STRICT planner for an AI agent. Your ONLY job is to decide
 which of the agent's registered tools (if any) should be called for
 the CURRENT goal below.
 
-Available tools (ONLY these - do not invent others):
-{list(self.tools.keys())}
+Available tools (ONLY these - do not invent others), with what each
+one actually does:
+{tool_descriptions}
 
 Recent context (this is HISTORY - things that already happened earlier
 in the conversation, NOT instructions for what to do now):
@@ -476,9 +500,14 @@ Current goal (decide based on THIS, not the history above):
 
 Rules:
 - Default to null. Only return a tool call if the CURRENT goal CLEARLY
-  and DIRECTLY matches what a tool does - exact numbers for math, a
-  clear file/folder path for file tools, a clear app/site name for
-  launch, a clear topic for posting.
+  and DIRECTLY matches what a tool does (per its description above) -
+  exact numbers for math, a clear file/folder path for file tools, a
+  clear app/site name for launch, a clear topic for posting.
+- Pass ONLY arguments that fit what the tool's description says it
+  takes. A tool's own name is never a valid argument to a DIFFERENT
+  tool - if you don't have a real argument value the goal actually
+  gives you, either omit that tool or use an empty args list, don't
+  invent a placeholder value.
 - The "Recent context" is what ALREADY happened - a previous launch,
   search, or post draft. Do NOT treat it as a new instruction to repeat.
   If the user already asked to open LinkedIn and the goal now is
@@ -509,14 +538,60 @@ Return ONLY the JSON list or the literal null. No other text.
         if not isinstance(data, list):
             return None
 
-        # Validate every step references a real, registered tool.
-        # A plan that hallucinates an unknown tool is worse than no plan -
-        # reject it entirely rather than partially executing garbage.
+        # Validate every step references a real, registered tool AND
+        # that the argument count actually fits that tool's function
+        # signature. A plan that hallucinates an unknown tool, or
+        # passes the wrong number of arguments (e.g. one arg to
+        # multiply, which needs two, or any args to a zero-arg report
+        # function), is worse than no plan - reject it entirely rather
+        # than partially executing garbage. This is the same
+        # "reject the whole thing" philosophy as the tool-name check,
+        # extended to catch a hallucinated-but-real tool name paired
+        # with nonsense arguments (the multiply/car_data_clean_report
+        # bug above) rather than only catching invented tool names.
         for step in data:
             if not isinstance(step, dict) or step.get("step") not in self.tools:
                 return None
+            tool = self.tools[step.get("step")]
+            args = step.get("args", [])
+            if not self._args_fit_tool_signature(tool, args):
+                return None
 
         return data
+
+    @staticmethod
+    def _args_fit_tool_signature(tool, args):
+        """
+        True if calling tool.func(*args) has a plausible chance of
+        working, based on argument COUNT against the function's real
+        signature - not full type-checking (that's what the try/except
+        around the actual call is for), just a cheap, reliable sanity
+        check that catches the common hallucination case (wrong number
+        of arguments) before the tool ever actually runs.
+        """
+        import inspect
+        try:
+            signature = inspect.signature(tool.func)
+        except (TypeError, ValueError):
+            # some callables (e.g. certain builtins) don't support
+            # introspection - don't block on something we can't check
+            return True
+
+        required = 0
+        allows_extra = False
+        max_allowed = 0
+        for param in signature.parameters.values():
+            if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                allows_extra = True
+                continue
+            if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                max_allowed += 1
+                if param.default is inspect.Parameter.empty:
+                    required += 1
+
+        if allows_extra:
+            return len(args) >= required
+        return required <= len(args) <= max_allowed
     # -----------------------------
     # PLAIN CHAT (NO TOOLS)
     # -----------------------------
@@ -552,8 +627,10 @@ Return ONLY the JSON list or the literal null. No other text.
 
         personality_block = f"{self.personality}\n\n" if self.personality else ""
 
+        context_text, found_relevant_doc_chunk = self.recalled_context(message, prefer_source=prefer_source)
+
         source_scope_note = ""
-        if prefer_source:
+        if prefer_source and found_relevant_doc_chunk:
             source_scope_note = (
                 f"\nYou are currently focused on the document `{prefer_source}`. "
                 f"If excerpts from other files also appear above, ignore them "
@@ -563,7 +640,7 @@ Return ONLY the JSON list or the literal null. No other text.
                 f"it's actually labeled with a different filename above.\n"
             )
 
-        prompt = f"""{personality_block}{self.recalled_context(message, prefer_source=prefer_source)}
+        prompt = f"""{personality_block}{context_text}
 {source_scope_note}
 Answer the CURRENT message below directly and specifically. Use the
 document excerpts and conversation history above as your only source
@@ -700,7 +777,7 @@ How to use these results well:
 Search results:
 {search_block}
 
-{self.recalled_context(message)}
+{self.recalled_context(message)[0]}
 
 User:
 {message}
@@ -849,11 +926,20 @@ Topic: {topic}
     # SINGLE STEP FALLBACK
     # -----------------------------
     def _single_step(self, prompt):
+        # Same fix as plan() above: bare tool names give a small local
+        # model nothing to match the request against once there are
+        # more than a couple of tools registered - include what each
+        # one actually does.
+        tool_descriptions = "\n".join(
+            f"  - {name}: {tool.description or '(no description)'}"
+            for name, tool in self.tools.items()
+        )
+
         tool_prompt = f"""
 You are a tool-selection engine for an AI agent.
 
-Available tools:
-{list(self.tools.keys())}
+Available tools, with what each one actually does:
+{tool_descriptions}
 
 Recent context (this is HISTORY - things that already happened, NOT
 instructions for what to do now):
@@ -863,10 +949,10 @@ Current user request (decide based on THIS, not the history above):
 {prompt}
 
 Default to no tool. Only pick a tool if the CURRENT request CLEARLY and
-DIRECTLY needs it - exact numbers for math, a clear file/folder path
-for file tools, a clear app/site name for launch, a clear topic for
-posting. For greetings, small talk, questions about the conversation
-itself, or anything vague, no tool fits.
+DIRECTLY needs it, per that tool's description above - exact numbers
+for math, a clear file/folder path for file tools, a clear app/site
+name for launch, a clear topic for posting. For greetings, small talk,
+questions about the conversation itself, or anything vague, no tool fits.
 
 The "Recent context" is what ALREADY happened, not a new instruction.
 If a previous message launched an app or drafted a post, and the
@@ -896,6 +982,12 @@ Examples:
 
         if tool_name and tool_name in self.tools:
             args = self.safe_args(data.get("args", []))
+            # Same defense as plan(): a hallucinated argument (wrong
+            # count, or another tool's name stuffed in as a value) is
+            # worse than no tool call - fall back to chat() rather than
+            # letting the tool blow up with a raw exception.
+            if not self._args_fit_tool_signature(self.tools[tool_name], args):
+                return self.chat(prompt)
             result = self.tools[tool_name].run(*args)
             self.add_memory("tool", f"{tool_name} -> {result}")
             return result
