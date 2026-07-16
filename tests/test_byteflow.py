@@ -2432,8 +2432,14 @@ def test_looks_like_open_request_excludes_compound_requests():
 
 def test_extract_open_target_strips_trigger_word():
     agent = Agent(provider=None, memory_path=False)
-    assert agent._extract_open_target(r"open file D:\Sem3") == r"file D:\Sem3"
+    # "file" is filler, not part of the actual path - launch() passes
+    # the target LITERALLY to the OS, so "file D:\Sem3" was never a
+    # real, valid path (only "D:\Sem3" is) - the old expected value
+    # here encoded that bug as if it were correct behavior.
+    assert agent._extract_open_target(r"open file D:\Sem3") == r"D:\Sem3"
     assert agent._extract_open_target("launch vscode") == "vscode"
+    assert agent._extract_open_target("open file name aman") == "aman"
+    assert agent._extract_open_target("open the file named report.pdf") == "report.pdf"
 
 
 def test_run_routes_open_request_to_launch_not_list_files():
@@ -2453,7 +2459,7 @@ def test_run_routes_open_request_to_launch_not_list_files():
     with patch("byteflow.desktop_tools.launch", return_value="Launched: D:\\Sem3") as mock_launch:
         result = agent.run(r"open file D:\Sem3")
 
-    mock_launch.assert_called_once_with(r"file D:\Sem3")
+    mock_launch.assert_called_once_with(r"D:\Sem3")
     assert result == "Launched: D:\\Sem3"
 
 
@@ -3046,6 +3052,171 @@ def test_chat_does_mention_document_focus_when_actually_relevant():
     agent.chat("Discrete Mathematics, credits")
 
     assert "currently focused on the document" in captured[0]
+
+
+# -----------------------------
+# CODE GENERATION SAFETY (never blindly execute non-code as Python)
+# -----------------------------
+
+def test_code_refuses_to_execute_syntactically_invalid_output():
+    # Real observed bug: when the model's response lacked a closing
+    # code fence (likely a truncated generation), extract_code_block's
+    # fallback treated the ENTIRE raw response - pure prose like "To
+    # run this code, you will need to install Flask..." - as if it
+    # were the code, producing a cryptic subprocess SyntaxError instead
+    # of an honest message.
+    class TruncatedProvider:
+        def generate(self, prompt):
+            if "durable fact" in prompt:
+                return "none"
+            return "To run this code, you will need to install Flask. You can do this with pip:"
+
+    agent = Agent(provider=TruncatedProvider(), memory_path=False)
+    result = agent.code("write a code for simple website", execute=True)
+
+    assert result["executed"] is True
+    assert result["result"].success is False
+    assert "No valid Python code was generated" in result["result"].stderr
+    # must NOT contain a raw subprocess traceback/syntax dump
+    assert "Traceback" not in result["result"].stderr
+
+
+def test_code_still_executes_genuinely_valid_code():
+    class NormalProvider:
+        def generate(self, prompt):
+            if "durable fact" in prompt:
+                return "none"
+            return "```python\nprint(2 + 2)\n```"
+
+    agent = Agent(provider=NormalProvider(), memory_path=False)
+    result = agent.code("add two numbers", execute=True)
+
+    assert result["executed"] is True
+    assert result["result"].success is True
+    assert "4" in result["result"].stdout
+
+
+# -----------------------------
+# OPEN-TARGET EXTRACTION (strip filler words so launch() gets a real path)
+# -----------------------------
+
+def test_run_handles_open_file_name_request_correctly():
+    from unittest.mock import patch
+
+    class FakeProvider:
+        def generate(self, prompt):
+            return "null"  # shouldn't even be consulted - open bypasses the planner
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+    with patch("byteflow.desktop_tools.launch", return_value="Launched: aman") as mock_launch:
+        agent.run("open file name aman")
+    mock_launch.assert_called_once_with("aman")
+
+
+# -----------------------------
+# SEARCH QUERY BROADENING (retry before giving up on empty results)
+# -----------------------------
+
+def test_broaden_search_query_strips_filler_and_numbers():
+    assert Agent._broaden_search_query("today top 10 news") == "news"
+    assert Agent._broaden_search_query("best restaurants near me") == "restaurants near me"
+
+
+def test_chat_with_search_retries_with_broadened_query_on_empty_results():
+    from unittest.mock import patch
+
+    class FakeProvider:
+        def generate(self, prompt):
+            return "none" if "durable fact" in prompt else "Here's the news."
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+
+    call_log = []
+
+    def fake_search(query, max_results=4):
+        call_log.append(query)
+        if query == "news":
+            return [{"title": "Some headline", "snippet": "...", "url": "https://example.com"}]
+        return []
+
+    with patch("byteflow.web_search.search", side_effect=fake_search):
+        result = agent.chat_with_search("today top 10 news")
+
+    assert call_log == ["today top 10 news", "news"]  # tried narrow first, then broadened
+    assert "Here's the news." in result
+
+
+def test_chat_with_search_still_gives_honest_failure_if_broadened_query_also_empty():
+    from unittest.mock import patch
+
+    class FakeProvider:
+        def generate(self, prompt):
+            return "none" if "durable fact" in prompt else "should not be called"
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+
+    with patch("byteflow.web_search.search", return_value=[]):
+        result = agent.chat_with_search("today top 10 news")
+
+    assert "didn't find any results" in result
+
+
+# -----------------------------
+# MEMORY POISONING PREVENTION (never persist hallucinated tool/code claims as facts)
+# -----------------------------
+
+def test_learn_from_exchange_refuses_to_save_hallucinated_tool_error_claim():
+    # Real observed bug: the assistant hallucinated that a tool called
+    # predict_price() was "missing two required positional arguments:
+    # 'year' and 'mileage_km'" - no such tool ever existed. This got
+    # extracted as a "durable fact" and was then read back as
+    # established truth in every future conversation, causing the
+    # identical false claim to repeat indefinitely, even long after a
+    # real, correctly-working tool was built. Prove this class of
+    # claim is never saved, even if the extraction model tries to.
+    class HallucinatingExtractionProvider:
+        def generate(self, prompt):
+            return "The predict_price function is missing year and mileage_km arguments"
+
+    agent = Agent(provider=HallucinatingExtractionProvider(), memory_path=False)
+    result = agent.learn_from_exchange(
+        "predict car price 2028 which runs 10000km",
+        "there was an issue with the predict_price() tool",
+    )
+    assert result is None
+    assert agent.profile.all_facts() == []
+
+
+def test_learn_from_exchange_still_saves_genuine_user_facts():
+    class NormalExtractionProvider:
+        def generate(self, prompt):
+            return "User's name is Aman and he studies computer engineering"
+
+    agent = Agent(provider=NormalExtractionProvider(), memory_path=False)
+    result = agent.learn_from_exchange(
+        "my name is Aman, I study computer engineering", "Nice to meet you, Aman!"
+    )
+    assert result == "User's name is Aman and he studies computer engineering"
+    assert result in agent.profile.all_facts()
+
+
+def test_looks_like_tool_or_code_claim_catches_common_phrasings():
+    tool_claims = [
+        "The predict_price function is missing year and mileage_km arguments",
+        "There was an error with the multiply tool",
+        "The car_data_overview() function is not functioning correctly",
+        "A traceback occurred when running the script",
+    ]
+    for claim in tool_claims:
+        assert Agent._looks_like_tool_or_code_claim(claim) is True, f"{claim!r} should be caught"
+
+    genuine_facts = [
+        "User's name is Aman",
+        "User prefers Python over Java",
+        "User is working on a machine learning project called DataLab",
+    ]
+    for fact in genuine_facts:
+        assert Agent._looks_like_tool_or_code_claim(fact) is False, f"{fact!r} should NOT be caught"
 
 
 if __name__ == "__main__":

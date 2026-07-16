@@ -296,19 +296,34 @@ class Agent:
             return None
 
         extraction_prompt = f"""Look at this exchange and decide if it contains
-a durable fact about the user worth remembering for future conversations -
-things like their name, preferences, ongoing projects, corrections they've
-made, or important context about their situation.
+a durable fact about the USER (the person) worth remembering for future
+conversations - things like their name, preferences, ongoing projects,
+corrections they've made, or important context about their situation.
 
 Ignore throwaway chatter, small talk, one-off questions, and anything that
 won't matter in a future conversation.
 
+CRITICAL: never extract a "fact" about a tool, function, or code being
+broken, missing arguments, erroring, or "not working correctly" - even if
+the assistant's own reply claimed this. A real observed failure: the
+assistant once hallucinated that a tool was broken, and this excuse alone
+was significant enough to look like something worth remembering - it then
+got saved as a permanent fact and was read back as established truth in
+every future conversation, even long after the tool worked fine, causing
+the same false claim to repeat indefinitely. Tool/system state is not a
+durable fact about the user, and assistant self-reports about errors are
+exactly the least reliable thing to treat as ground truth - they may be
+wrong, and even when right, they go stale the moment the code changes.
+
 User said: {user_message}
 Assistant replied: {assistant_response}
 
-If there IS a durable fact, respond with ONLY a short standalone sentence
-stating it (e.g. "User's name is Aman" or "User prefers Python over Java").
-If there is NOT a durable fact worth remembering, respond with ONLY: none
+If there IS a durable fact ABOUT THE USER (not about a tool/system), respond
+with ONLY a short standalone sentence stating it (e.g. "User's name is Aman"
+or "User prefers Python over Java").
+If there is NOT a durable fact worth remembering, or the only "fact" here is
+about a tool/function/error/code behavior rather than the user themselves,
+respond with ONLY: none
 """
 
         response = self.provider.generate(extraction_prompt)
@@ -317,8 +332,38 @@ If there is NOT a durable fact worth remembering, respond with ONLY: none
         if not fact or fact.lower() in ("none", "none.", "n/a"):
             return None
 
+        if self._looks_like_tool_or_code_claim(fact):
+            # Defense-in-depth: the prompt above already instructs the
+            # model not to extract this kind of "fact", but that relies
+            # on the model actually following instructions - which we
+            # have directly observed models fail to do. This is a
+            # real observed bug: a hallucinated claim about a broken
+            # tool ("predict_price() is missing year and mileage_km
+            # arguments") got saved as a permanent fact and was read
+            # back as established truth in every future conversation,
+            # long after the tool was fixed. Refuse to save anything
+            # that looks like a claim about tool/function/code
+            # behavior, regardless of what the extraction model returned.
+            return None
+
         added = self.profile.add_fact(fact)
         return fact if added else None
+
+    # Keywords that show up in claims about tool/function/code behavior
+    # rather than durable facts about the person - a "fact" containing
+    # these is almost certainly system-state (which can be wrong, and
+    # goes stale the moment code changes) rather than something worth
+    # persisting indefinitely about the user.
+    _TOOL_CLAIM_KEYWORDS = (
+        "function", "tool", "argument", "positional", "parameter",
+        "missing required", "not functioning", "not working correctly",
+        "error occurred", "exception", "traceback", "()", ".py",
+    )
+
+    @classmethod
+    def _looks_like_tool_or_code_claim(cls, fact):
+        lowered = fact.lower()
+        return any(keyword in lowered for keyword in cls._TOOL_CLAIM_KEYWORDS)
 
     # -----------------------------
     # CODE MODE
@@ -410,6 +455,33 @@ single fenced Python code block:
         }
 
         if execute and code_str:
+            import ast
+            try:
+                ast.parse(code_str)
+            except SyntaxError as e:
+                # Don't shell out to run something that can't possibly
+                # work - this is what catches extract_code_block's
+                # fallback returning pure prose (e.g. the model's
+                # response got cut short before ever writing a code
+                # fence, so the "code" is actually just explanatory
+                # text like "To run this code, you will need to
+                # install Flask..."). A clear message here beats a
+                # subprocess-level "SyntaxError: invalid syntax" on
+                # text that was never meant to be code in the first place.
+                from .sandbox import ExecutionResult
+                result["executed"] = True
+                result["result"] = ExecutionResult(
+                    stdout="",
+                    stderr=(
+                        f"[No valid Python code was generated for this request - "
+                        f"the model's response didn't contain a complete code "
+                        f"block, so nothing was run. ({e.msg} at line {e.lineno})]"
+                    ),
+                    returncode=-1,
+                )
+                self.add_memory("tool", "executed generated code -> success=False (invalid syntax, not run)")
+                return result
+
             from .sandbox import run_python_code
             exec_result = run_python_code(code_str, timeout=timeout)
             result["executed"] = True
@@ -700,6 +772,32 @@ User:
                     changed = True
         return cleaned if cleaned else text.strip()
 
+    # Filler words that make a query oddly specific for a search
+    # engine without adding real topical content - stripping these is
+    # a reasonable second attempt when the exact phrasing returns
+    # nothing, since a search engine often has results for the
+    # underlying topic even when the exact combination of words doesn't
+    # match anything closely enough to surface.
+    _SEARCH_BROADENING_STOPWORDS = frozenset({
+        "today", "todays", "now", "current", "currently", "latest",
+        "top", "best", "the",
+    })
+
+    @classmethod
+    def _broaden_search_query(cls, query):
+        """
+        Strip filler words and any bare number (from "top 10" style
+        phrasing) out of `query`, leaving just the core topic. Returns
+        "" if nothing meaningful remains (caller should treat that as
+        "no broadening possible", not retry with an empty string).
+        """
+        words = re.findall(r"[a-zA-Z]+|\d+", query)
+        kept = [
+            w for w in words
+            if w.lower() not in cls._SEARCH_BROADENING_STOPWORDS and not w.isdigit()
+        ]
+        return " ".join(kept).strip()
+
     def chat_with_search(self, message, max_results=4):
         """
         Like chat(), but first performs a real web search (DuckDuckGo,
@@ -739,6 +837,23 @@ User:
             )
             self.add_memory("assistant", answer)
             return answer
+
+        if not results:
+            # A narrow/specific query can come back empty even when a
+            # broader version of the same request has real results -
+            # e.g. "today top 10 news" is oddly specific phrasing for
+            # a search engine, while "news" or "news today" alone
+            # often isn't. One retry with filler words stripped, before
+            # giving up - still a hard "admit it search failed" path
+            # if even the broadened query comes back empty.
+            broadened_query = self._broaden_search_query(query)
+            if broadened_query and broadened_query != query:
+                try:
+                    results = search(broadened_query, max_results=max_results)
+                except WebSearchError:
+                    results = []
+                if results:
+                    query = broadened_query  # so the prompt/citations below reflect what actually found results
 
         if not results:
             answer = (
@@ -1290,9 +1405,36 @@ Examples:
             return False
         return True
 
+    # Words that describe WHAT is being opened rather than being part
+    # of its actual name/path - "open file D:\Sem3" means launch
+    # "D:\Sem3", not the literal string "file D:\Sem3" (which isn't a
+    # real path and would fail). Stripped from the front of whatever
+    # follows the trigger word, in any combination/order they appear
+    # ("file named aman" / "the file called aman" / "file name aman").
+    _OPEN_TARGET_FILLER_WORDS = (
+        "file", "files", "folder", "folders", "directory", "app",
+        "application", "program", "the", "a", "an", "named", "name",
+        "called", "call",
+    )
+
     def _extract_open_target(self, prompt):
         parts = prompt.strip().split(None, 1)
-        return parts[1].strip() if len(parts) > 1 else ""
+        target = parts[1].strip() if len(parts) > 1 else ""
+        if not target:
+            return target
+
+        words = target.split()
+        # only strip filler words from the FRONT, and only up to the
+        # point a real, non-filler token appears - "open file D:\Sem3"
+        # strips "file" and stops at "D:\Sem3"; "open the file named
+        # report.pdf" strips "the", "file", "named" and stops at
+        # "report.pdf". A path/name containing one of these words
+        # later on (unlikely, but e.g. a folder literally named
+        # "the") is left alone, since only a LEADING run is stripped.
+        i = 0
+        while i < len(words) - 1 and words[i].lower().strip(",") in self._OPEN_TARGET_FILLER_WORDS:
+            i += 1
+        return " ".join(words[i:])
 
     def _classify_intent(self, prompt):
         """
