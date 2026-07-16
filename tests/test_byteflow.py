@@ -3219,6 +3219,92 @@ def test_looks_like_tool_or_code_claim_catches_common_phrasings():
         assert Agent._looks_like_tool_or_code_claim(fact) is False, f"{fact!r} should NOT be caught"
 
 
+# -----------------------------
+# RAW MEMORY RECALL POISONING PREVENTION (separate from the profile-fact fix above)
+# -----------------------------
+
+def test_recalled_context_excludes_old_assistant_tool_error_claims():
+    # Real observed bug, distinct from the profile-poisoning one above:
+    # even with profile.json clean, an OLD ASSISTANT REPLY hallucinating
+    # a broken tool got resurfaced by semantic search whenever a similar
+    # question was asked again, and the model treated its own past false
+    # claim as if it were settled history - indefinitely, across sessions,
+    # without ever touching the profile.
+    agent = Agent(provider=None, memory_path=False)
+
+    agent.add_memory("user", "predict car price 2028 which runs 10000km")
+    agent.add_memory(
+        "assistant",
+        "As we discussed earlier, there was an issue with the predict_price() "
+        "function missing two required positional arguments: 'year' and 'mileage_km'.",
+    )
+    for i in range(10):
+        agent.add_memory("user", f"unrelated filler message {i}")
+        agent.add_memory("assistant", f"unrelated filler reply {i}")
+
+    context, _ = agent.recalled_context("predict car price 2030 with 5000km")
+    assert "predict_price() function missing" not in context
+
+
+def test_recalled_context_still_surfaces_genuine_relevant_history():
+    # The fix must not become so aggressive it hides real, useful
+    # earlier context that has nothing to do with tool/code claims.
+    agent = Agent(provider=None, memory_path=False)
+
+    agent.add_memory("user", "I prefer my car predictions in euros, not rupees")
+    agent.add_memory("assistant", "Got it, I'll use euros going forward.")
+    for i in range(10):
+        agent.add_memory("user", f"unrelated filler message {i}")
+        agent.add_memory("assistant", f"unrelated filler reply {i}")
+
+    context, _ = agent.recalled_context("predict car price 2030")
+    assert "euros" in context
+
+
+# -----------------------------
+# FACT EXTRACTION PREAMBLE STRIPPING (fixes broken deduplication)
+# -----------------------------
+
+def test_strip_extraction_preamble_normalizes_real_observed_junk_variants():
+    # Real observed bug: a dozen near-duplicate profile entries for the
+    # same actual fact, differing only in preamble wording the
+    # extraction model added despite being told not to - which broke
+    # Profile's normalized-text deduplication entirely.
+    variants = [
+        "The durable fact worth remembering is:\nUser's name is Aman",
+        "The durable fact worth remembering from this exchange is:\nUser's name is Aman",
+        "The durable fact is: User's name is Aman",
+        "User's name is Aman",
+    ]
+    stripped = [Agent._strip_extraction_preamble(v) for v in variants]
+    assert len(set(stripped)) == 1  # all four collapse to the exact same clean fact
+    assert stripped[0] == "User's name is Aman"
+
+
+def test_learn_from_exchange_deduplicates_despite_varying_preambles():
+    call_count = {"n": 0}
+
+    class VaryingPreambleProvider:
+        def generate(self, prompt):
+            call_count["n"] += 1
+            preambles = [
+                "The durable fact worth remembering is:\nUser's name is Aman",
+                "The durable fact is: User's name is Aman",
+                "User's name is Aman",
+            ]
+            return preambles[(call_count["n"] - 1) % len(preambles)]
+
+    agent = Agent(provider=VaryingPreambleProvider(), memory_path=False)
+    agent.learn_from_exchange("hi, I'm Aman", "Nice to meet you!")
+    agent.learn_from_exchange("hi again", "Hello!")
+    agent.learn_from_exchange("hi once more", "Hi there!")
+
+    # despite three different preamble phrasings, only ONE fact should
+    # actually be stored - deduplication should now correctly recognize
+    # these as the same underlying fact
+    assert agent.profile.all_facts() == ["User's name is Aman"]
+
+
 if __name__ == "__main__":
     # allow running without pytest installed
     test_fns = [v for k, v in list(globals().items()) if k.startswith("test_")]

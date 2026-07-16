@@ -230,6 +230,19 @@ class Agent:
         older_relevant = [
             entry for entry, score in relevant
             if entry["content"] not in recent_texts
+            # Never resurface an old ASSISTANT reply that looks like a
+            # tool/code-error claim as if it were settled historical
+            # context - a real observed bug: an old hallucinated reply
+            # about a broken tool got repeatedly pulled back in by
+            # semantic search whenever a similar question was asked
+            # again, and the model treated its own past false claim as
+            # established truth ("as we discussed earlier..."),
+            # compounding indefinitely across sessions, without this
+            # ever touching profile.json (see learn_from_exchange's
+            # matching fix - that one prevents PERMANENT facts from
+            # being poisoned; this one prevents raw conversation
+            # history from being resurfaced as if it were reliable).
+            and not (entry["role"] == "assistant" and self._looks_like_tool_or_code_claim(entry["content"]))
         ]
 
         doc_chunks = []
@@ -279,6 +292,34 @@ class Agent:
     # -----------------------------
     # LEARNING (FACT EXTRACTION)
     # -----------------------------
+    # Preamble phrases the extraction model has been observed prepending
+    # despite being told to respond with ONLY the fact itself - matched
+    # case-insensitively at the start of the response, optionally
+    # followed by a colon and/or newline before the real fact.
+    _EXTRACTION_PREAMBLE_PATTERNS = (
+        r"^the durable fact( worth remembering)?( from this exchange)?( is)?\s*:?\s*",
+        r"^here('s| is) (a |the )?durable fact\s*:?\s*",
+        r"^(a |the )?durable fact\s*:?\s*",
+    )
+
+    @classmethod
+    def _strip_extraction_preamble(cls, fact):
+        """
+        Remove leading meta-commentary the extraction model sometimes
+        adds despite being told not to (see learn_from_exchange's
+        prompt) - e.g. "The durable fact worth remembering is:\nUser's
+        name is Aman" becomes just "User's name is Aman". Without
+        this, near-identical facts with slightly different preambles
+        each look unique to Profile's normalized-text deduplication,
+        producing a pile of redundant entries for the same actual fact
+        - a real observed bug (a dozen "Aman"-related entries in one
+        profile, several differing only in their preamble wording).
+        """
+        cleaned = fact.strip()
+        for pattern in cls._EXTRACTION_PREAMBLE_PATTERNS:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        return cleaned.strip("\n ").strip()
+
     def learn_from_exchange(self, user_message, assistant_response):
         """
         Use one extra LLM call to decide whether this exchange contains a
@@ -330,6 +371,10 @@ respond with ONLY: none
         fact = response.strip().strip('"')
 
         if not fact or fact.lower() in ("none", "none.", "n/a"):
+            return None
+
+        fact = self._strip_extraction_preamble(fact)
+        if not fact:
             return None
 
         if self._looks_like_tool_or_code_claim(fact):
