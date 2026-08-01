@@ -3305,6 +3305,71 @@ def test_learn_from_exchange_deduplicates_despite_varying_preambles():
     assert agent.profile.all_facts() == ["User's name is Aman"]
 
 
+# -----------------------------
+# DOCUMENT-FALLBACK NO LONGER SWALLOWS REGISTERED-TOOL MESSAGES
+# -----------------------------
+
+def test_looks_like_document_request_respects_registered_extension_tools():
+    # Real observed bug: once ANY document had been uploaded, a short
+    # message ("predict car price 2028 which runs 10000km" - 7 words)
+    # got silently routed to chat() and never even reached the tool
+    # planner, because the old check only knew about a FIXED list of
+    # built-in keywords with zero awareness of extension tools.
+    agent = Agent(provider=None, memory_path=False)
+    agent.vector_store.add_document("syllabus content here", source="syllabus.pdf")
+    agent.register_tool(Tool(
+        "predict_car_price", lambda year, km: "predicted price",
+        "predicts the selling price for a NEW hypothetical car given its year and km_driven",
+    ))
+
+    assert agent._looks_like_document_request("predict car price 2028 which runs 10000km") is False
+
+
+def test_looks_like_document_request_still_catches_genuinely_vague_messages():
+    # The fix must not become so permissive that real document
+    # follow-ups stop being recognized when nothing registered matches.
+    agent = Agent(provider=None, memory_path=False)
+    agent.vector_store.add_document("syllabus content here", source="syllabus.pdf")
+    agent.register_tool(Tool("add", lambda a, b: a + b, "adds two numbers"))
+
+    assert agent._looks_like_document_request("explain unit 3 please") is True
+
+
+def test_overlaps_a_registered_tool_ignores_generic_stopwords():
+    agent = Agent(provider=None, memory_path=False)
+    agent.register_tool(Tool("add", lambda a, b: a + b, "adds two numbers together"))
+    # shares only stopwords ("the", "a", "to") with the tool's text - must not count as a match
+    assert agent._overlaps_a_registered_tool("what is the meaning of life") is False
+
+
+# -----------------------------
+# OPEN REQUESTS STILL WORK EVEN WITH A DOCUMENT LOADED (ordering fix)
+# -----------------------------
+
+def test_run_still_launches_apps_correctly_when_a_document_is_loaded():
+    # Real observed regression risk while fixing the bug above: "open"/
+    # "launch" requests don't go through the tool registry at all
+    # (launch() is called directly, not registered as a Tool), so the
+    # new dynamic tool-overlap check alone wouldn't protect them. Fixed
+    # by reordering open-detection to run before document-detection,
+    # the same early position weather/search already have - this test
+    # proves that actually holds.
+    from unittest.mock import patch
+
+    class FakeProvider:
+        def generate(self, prompt):
+            return "fallback"
+
+    agent = Agent(provider=FakeProvider(), memory_path=False)
+    agent.vector_store.add_document("syllabus content here", source="syllabus.pdf")
+
+    with patch("byteflow.desktop_tools.launch", return_value="Launched: notepad") as mock_launch:
+        result = agent.run("open notepad")
+
+    assert mock_launch.called is True
+    assert result == "Launched: notepad"
+
+
 if __name__ == "__main__":
     # allow running without pytest installed
     test_fns = [v for k, v in list(globals().items()) if k.startswith("test_")]

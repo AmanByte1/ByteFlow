@@ -1403,17 +1403,50 @@ Examples:
         # repeatedly been observed hallucinating a plausible-sounding
         # but wrong tool for exactly these short/garbled messages.
         # Preferring the grounded chat()/RAG answer here is the safer
-        # default.
+        # default - but ONLY when nothing currently registered actually
+        # matches the message. A real observed bug: this used to check
+        # against a small FIXED list of built-in keywords with zero
+        # awareness of extension tools - "predict car price 2028 which
+        # runs 10000km" (7 words, no match in the old fixed list) got
+        # silently routed straight to chat() and never even reached the
+        # tool planner, every single time ANY document had been
+        # uploaded in the session, regardless of that document's actual
+        # content or relevance. Checking against every currently
+        # registered tool's real name/description - not just a fixed
+        # list of the original built-ins - fixes this for any future
+        # extension too, not just this one case.
         if self.vector_store.has_documents() and 0 < len(p.split()) <= 8:
-            other_intent_words = (
-                "open", "launch", "start", "add", "subtract", "multiply",
-                "divide", "plus", "minus", "times", "weather", "forecast",
-                "temperature", "code", "debug", "function", "script",
-                "search", "google", "post", "tweet",
-            )
-            if not any(self._contains_word(p, w) for w in other_intent_words):
+            if not self._overlaps_a_registered_tool(p):
                 return True
 
+        return False
+
+    # Words too generic to count as a real signal that a message is
+    # about a specific tool - without this, nearly every message would
+    # spuriously "match" some tool's description (most descriptions
+    # contain words like "the", "a", "for", etc).
+    _TOOL_OVERLAP_STOPWORDS = frozenset({
+        "a", "an", "the", "is", "for", "to", "of", "and", "or", "with",
+        "on", "in", "at", "by", "from", "this", "that", "it", "its",
+        "takes", "one", "optional", "argument", "arguments", "e", "g",
+    })
+
+    def _overlaps_a_registered_tool(self, prompt_lower):
+        """
+        True if `prompt_lower` shares a meaningful keyword with any
+        currently registered tool's name or description - built-in OR
+        from an extension, since this dynamically checks self.tools
+        rather than a fixed list. Used to avoid the document-request
+        fallback above swallowing a message that's actually meant for
+        a real, registered tool just because it's short and a document
+        happens to be loaded.
+        """
+        for name, tool in self.tools.items():
+            tool_text = f"{name} {tool.description or ''}".lower()
+            tool_words = set(re.findall(r"[a-z]+", tool_text)) - self._TOOL_OVERLAP_STOPWORDS
+            prompt_words = set(re.findall(r"[a-z]+", prompt_lower))
+            if tool_words & prompt_words:
+                return True
         return False
 
     # -----------------------------
@@ -1734,11 +1767,11 @@ Examples:
         if self._looks_like_search_request(prompt):
             return self.chat_with_search(prompt)
 
-        if self._looks_like_document_request(prompt):
-            return self.chat(prompt)
-
         if self._looks_like_open_request(prompt):
             return self._answer_open_request(prompt)
+
+        if self._looks_like_document_request(prompt):
+            return self.chat(prompt)
 
         # Every check above is a fast, deterministic regex/keyword match
         # on exact phrasing. If none of them fired, this message uses

@@ -187,6 +187,21 @@ check(
 
 print()
 print("=" * 70)
+print("TEST GROUP 8: Document-loaded no longer hijacks tool requests")
+print("=" * 70)
+agent = Agent(provider=None, memory_path=False)
+agent.vector_store.add_document("syllabus content here", source="syllabus.pdf")
+agent.register_tool(Tool(
+    "predict_car_price", lambda year, km: "predicted price",
+    "predicts the selling price for a NEW hypothetical car given its year and km_driven",
+))
+check(
+    '"predict car price 2028 which runs 10000km" reaches the tool planner even with a document loaded',
+    agent._looks_like_document_request("predict car price 2028 which runs 10000km") is False,
+)
+
+print()
+print("=" * 70)
 print(f"RESULTS: {passed} passed, {failed} failed")
 print("=" * 70)
 
