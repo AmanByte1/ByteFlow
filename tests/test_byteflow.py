@@ -3370,6 +3370,79 @@ def test_run_still_launches_apps_correctly_when_a_document_is_loaded():
     assert result == "Launched: notepad"
 
 
+# -----------------------------
+# TOOL USAGE EXAMPLES IN PLANNER PROMPTS (improves tool-selection reliability)
+# -----------------------------
+
+def test_tool_example_field_defaults_to_empty_string():
+    tool = Tool("add", lambda a, b: a + b, "adds two numbers")
+    assert tool.example == ""
+
+
+def test_plan_includes_tool_example_when_provided():
+    captured = []
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured.append(prompt)
+            return "null"
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.register_tool(Tool(
+        "predict_car_price", lambda year, km: "predicted price",
+        "predicts car price", example='"predict a 2022 car with 30000km" -> predict_car_price(2022, 30000)',
+    ))
+    agent.plan("some goal")
+
+    assert '"predict a 2022 car with 30000km" -> predict_car_price(2022, 30000)' in captured[0]
+
+
+def test_single_step_includes_tool_example_when_provided():
+    captured = []
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured.append(prompt)
+            return '{"tool": null, "answer": "ok"}'
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.register_tool(Tool(
+        "predict_car_price", lambda year, km: "predicted price",
+        "predicts car price", example='"predict a 2022 car with 30000km" -> predict_car_price(2022, 30000)',
+    ))
+    agent._single_step("some goal")
+
+    assert '"predict a 2022 car with 30000km" -> predict_car_price(2022, 30000)' in captured[0]
+
+
+# -----------------------------
+# ANTI-FABRICATION: chat() must not simulate fake tool-call traces
+# -----------------------------
+
+def test_chat_prompt_explicitly_forbids_fake_tool_call_text():
+    # Real observed bug: chat() (reached when the planner failed to
+    # select a real tool) produced fabricated text formatted exactly
+    # like a genuine tool error - "[tool] predict_car_price -> [Tool
+    # Error - predict_car_price]: predict_price() missing 2 required
+    # positional arguments: 'year' and 'mileage_km'" - using invented
+    # function/parameter names that don't exist anywhere in the real
+    # code. Prove the instruction against this is actually present in
+    # the prompt sent to the model.
+    captured = []
+
+    class CapturingProvider:
+        def generate(self, prompt):
+            captured.append(prompt)
+            return "none" if "durable fact" in prompt else "answer"
+
+    agent = Agent(provider=CapturingProvider(), memory_path=False)
+    agent.chat("predict the price of a 2022 petrol car with 30000 km")
+
+    combined = captured[0]
+    assert "tool invocation" in combined
+    assert "fabricated error trace" in combined or "fake technical output" in combined
+
+
 if __name__ == "__main__":
     # allow running without pytest installed
     test_fns = [v for k, v in list(globals().items()) if k.startswith("test_")]

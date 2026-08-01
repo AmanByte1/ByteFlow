@@ -594,8 +594,22 @@ single fenced Python code block:
         # alone stopped being enough context for a small local model
         # to keep straight. Showing name AND description for each tool
         # gives it something real to match the goal against.
+        #
+        # A second, later observed gap: even WITH descriptions, a
+        # small local model reliably matched "predict car price 2028
+        # which runs 10000km" to predict_car_price, but failed on
+        # "predict the price of a 2022 petrol car with 30000 km" - a
+        # simple rephrasing of the exact same request - and fell
+        # through to chat(), which then hallucinated a fake tool-call
+        # trace with an invented function/parameter names instead of
+        # admitting no tool was actually called. A description alone
+        # is an abstract summary; a concrete "phrasing -> call"
+        # EXAMPLE is something a small model can pattern-match against
+        # far more reliably. Tools can optionally supply one (see
+        # tools.py's Tool.example) - included here when present.
         tool_descriptions = "\n".join(
             f"  - {name}: {tool.description or '(no description)'}"
+            + (f"\n    e.g. {tool.example}" if getattr(tool, "example", "") else "")
             for name, tool in self.tools.items()
         )
 
@@ -768,6 +782,15 @@ they already know. If the context above doesn't contain enough
 information to answer clearly (e.g. it doesn't actually mention what's
 being asked about), say what's missing rather than guessing or making
 something up.
+
+You are answering in plain conversation right now - no tool was
+actually called for this message. NEVER write text that looks like a
+tool invocation or a tool error (e.g. "[tool] some_name -> ...", or
+"function_name() missing N required arguments", or any fabricated
+error trace) - if you don't have a real tool result to report, just
+answer directly in your own words or say what information you'd need,
+without inventing fake technical output to make it look like something
+was actually run.
 
 User:
 {message}
@@ -1089,9 +1112,13 @@ Topic: {topic}
         # Same fix as plan() above: bare tool names give a small local
         # model nothing to match the request against once there are
         # more than a couple of tools registered - include what each
-        # one actually does.
+        # one actually does, plus a concrete usage example when the
+        # tool provides one (see tools.py's Tool.example and plan()'s
+        # matching comment for why examples matter more than
+        # descriptions alone for a small model's reliability).
         tool_descriptions = "\n".join(
             f"  - {name}: {tool.description or '(no description)'}"
+            + (f"\n    e.g. {tool.example}" if getattr(tool, "example", "") else "")
             for name, tool in self.tools.items()
         )
 
