@@ -1,0 +1,30 @@
+{
+  "name": "Byte",
+  "age_ticks": 3197,
+  "mood": 90,
+  "trust": 70,
+  "energy": 75,
+  "level": 4,
+  "xp": 104,
+  "notes": [
+    "User said: open calculator",
+    "User said: open calculator",
+    "User said: open youtube",
+    "User said: open calculator",
+    "User said: open youtube",
+    "User said: what is your name",
+    "User said: now your name is kai",
+    "User said: you like it or not your new name",
+    "User said: how many think you can do",
+    "User said: can you open app",
+    "User said: YouTube",
+    "User said: open YouTube",
+    "User said: now search on YouTube AmanByte",
+    "User said: open youtube",
+    "User said: open youtube",
+    "User said: open youtube"
+  ],
+  "learned_actions": {
+    "action name": "open calculator"
+  }
+}

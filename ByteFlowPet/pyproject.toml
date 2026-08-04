@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "byteflow-pet"
+version = "0.1.0"
+description = "A desktop pet shell for ByteFlow that can remember, grow, and learn simple actions."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+desktop-control = ["pyautogui>=0.9.54"]
+dev = ["pytest"]
+
+[project.scripts]
+byteflow-pet = "byteflow_pet.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
