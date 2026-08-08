@@ -1,0 +1,9 @@
+# ByteFlow Frontend dependencies
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.0.0
+
+# Optional but recommended
+qrcode>=7.0          # prints QR code in terminal for phone scanning
+pyperclip>=1.8.2     # clipboard support in automator
+psutil>=5.9.0        # system info / process management in automator
