@@ -3,627 +3,1467 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0f">
 <title>ByteFlow</title>
 <style>
-  :root {
-    --bg: #0a0a0f;
-    --bg2: #111118;
-    --bg3: #1a1a25;
-    --accent: #4f8cff;
-    --accent2: #7c4fff;
-    --green: #00e5a0;
-    --red: #ff4f6a;
-    --yellow: #ffd94f;
-    --text: #e8e8f0;
-    --muted: #666680;
-    --border: #2a2a3a;
-    --radius: 16px;
-    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+:root {
+  --bg:#0a0a0f; --bg2:#111118; --bg3:#1a1a25; --bg4:#222233;
+  --accent:#4f8cff; --accent2:#7c4fff; --accent3:#4fffcf;
+  --green:#00e5a0; --red:#ff4f6a; --yellow:#ffd94f; --orange:#ff8c4f;
+  --text:#e8e8f0; --text2:#b0b0c8; --muted:#666680; --border:#2a2a3a;
+  --radius:16px; --radius-sm:10px;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);overflow:hidden;overscroll-behavior:none}
+button,input,textarea,select{font-family:var(--font)}
 
-  /* ── Layout ── */
-  #app { display: flex; flex-direction: column; height: 100vh; max-width: 480px; margin: 0 auto; position: relative; }
+/* ── Layout ── */
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:560px;margin:0 auto;position:relative}
 
-  /* ── Header ── */
-  #header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 18px 10px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-    flex-shrink: 0;
-  }
-  #header .logo { display: flex; align-items: center; gap: 10px; }
-  #header .logo .orb {
-    width: 32px; height: 32px; border-radius: 50%;
-    background: radial-gradient(circle at 35% 35%, var(--accent), var(--accent2));
-    box-shadow: 0 0 14px rgba(79,140,255,0.5);
-    animation: pulse 3s ease-in-out infinite;
-  }
-  #header .logo h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-  #header .logo h1 span { color: var(--accent); }
-  #status-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--muted); transition: background 0.3s;
-  }
-  #status-dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
-  #status-dot.thinking { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); animation: blink 0.6s infinite; }
-  #status-dot.error { background: var(--red); }
-  #model-badge {
-    font-size: 11px; color: var(--muted); background: var(--bg3);
-    padding: 3px 9px; border-radius: 20px; border: 1px solid var(--border);
-  }
+/* ── Header ── */
+#header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px 10px;padding-top:max(14px,env(safe-area-inset-top));
+  border-bottom:1px solid var(--border);flex-shrink:0;
+  background:rgba(10,10,15,0.95);backdrop-filter:blur(12px);
+  position:sticky;top:0;z-index:50;
+}
+.logo{display:flex;align-items:center;gap:10px}
+.orb{
+  width:32px;height:32px;border-radius:50%;
+  background:conic-gradient(from 180deg, var(--accent),var(--accent2),var(--accent3),var(--accent));
+  box-shadow:0 0 20px rgba(79,140,255,0.4);
+  animation:spin 6s linear infinite;flex-shrink:0;
+}
+@keyframes spin{to{filter:hue-rotate(360deg)}}
+.logo h1{font-size:18px;font-weight:800;letter-spacing:-0.5px}
+.logo h1 span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+#header-right{display:flex;align-items:center;gap:10px}
+#status-pill{
+  display:flex;align-items:center;gap:6px;
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:20px;padding:4px 10px;cursor:pointer;
+}
+#status-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:all 0.3s}
+#status-dot.online{background:var(--green);box-shadow:0 0 8px var(--green)}
+#status-dot.thinking{background:var(--yellow);animation:blink 0.6s infinite}
+#status-dot.error{background:var(--red);box-shadow:0 0 8px var(--red)}
+#model-name{font-size:11px;color:var(--text2);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#notif-btn{
+  width:34px;height:34px;border-radius:50%;background:var(--bg3);
+  border:1px solid var(--border);display:flex;align-items:center;
+  justify-content:center;cursor:pointer;font-size:16px;position:relative;
+}
+#notif-badge{
+  display:none;position:absolute;top:-2px;right:-2px;
+  width:14px;height:14px;border-radius:50%;background:var(--red);
+  font-size:9px;color:#fff;align-items:center;justify-content:center;
+}
+#notif-badge.show{display:flex}
 
-  /* ── Mode tabs ── */
-  #modes {
-    display: flex; gap: 6px; padding: 10px 14px 6px;
-    overflow-x: auto; scrollbar-width: none; flex-shrink: 0;
-  }
-  #modes::-webkit-scrollbar { display: none; }
-  .mode-btn {
-    flex-shrink: 0; padding: 6px 14px; border-radius: 20px; font-size: 13px;
-    border: 1px solid var(--border); background: var(--bg3); color: var(--muted);
-    cursor: pointer; transition: all 0.2s; font-family: var(--font);
-  }
-  .mode-btn.active {
-    background: var(--accent); color: #fff; border-color: var(--accent);
-    box-shadow: 0 0 12px rgba(79,140,255,0.35);
-  }
+/* ── Nav Tabs ── */
+#nav{
+  display:flex;border-bottom:1px solid var(--border);flex-shrink:0;
+  background:var(--bg);overflow-x:auto;scrollbar-width:none;
+}
+#nav::-webkit-scrollbar{display:none}
+.nav-tab{
+  flex:1;min-width:56px;padding:10px 6px 8px;
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;
+  transition:all 0.2s;font-size:10px;white-space:nowrap;
+}
+.nav-tab .ti{font-size:18px}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.nav-tab:hover{color:var(--text2)}
 
-  /* ── Messages ── */
-  #messages {
-    flex: 1; overflow-y: auto; padding: 12px 14px;
-    display: flex; flex-direction: column; gap: 10px;
-    scroll-behavior: smooth;
-  }
-  #messages::-webkit-scrollbar { width: 3px; }
-  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+/* ── Panels ── */
+.panel{flex:1;display:none;flex-direction:column;overflow:hidden;min-height:0}
+.panel.active{display:flex}
 
-  .msg { display: flex; flex-direction: column; max-width: 88%; animation: fadeUp 0.25s ease; }
-  .msg.user { align-self: flex-end; align-items: flex-end; }
-  .msg.bot  { align-self: flex-start; align-items: flex-start; }
-  .msg.system { align-self: center; align-items: center; max-width: 100%; }
+/* ═══════════════════════════════════════════════════
+   CHAT PANEL
+═══════════════════════════════════════════════════ */
+#quick-actions{
+  display:flex;gap:6px;padding:10px 14px 6px;
+  overflow-x:auto;scrollbar-width:none;flex-shrink:0;
+}
+#quick-actions::-webkit-scrollbar{display:none}
+.qa-chip{
+  flex-shrink:0;display:flex;align-items:center;gap:5px;
+  padding:6px 12px;border-radius:20px;font-size:12px;
+  border:1px solid var(--border);background:var(--bg3);color:var(--text2);
+  cursor:pointer;transition:all 0.2s;white-space:nowrap;
+}
+.qa-chip:hover,.qa-chip:active{background:var(--bg4);border-color:var(--accent);color:var(--accent)}
+.qa-chip .ce{font-size:14px}
 
-  .bubble {
-    padding: 10px 14px; border-radius: var(--radius); font-size: 14px;
-    line-height: 1.55; word-break: break-word;
-  }
-  .msg.user .bubble {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: #fff; border-bottom-right-radius: 4px;
-  }
-  .msg.bot .bubble {
-    background: var(--bg3); color: var(--text);
-    border: 1px solid var(--border); border-bottom-left-radius: 4px;
-  }
-  .msg.system .bubble {
-    background: transparent; color: var(--muted); font-size: 12px;
-    border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px;
-  }
-  .msg-time { font-size: 10px; color: var(--muted); margin-top: 3px; padding: 0 4px; }
+#mode-bar{
+  display:flex;gap:6px;padding:4px 14px 8px;
+  overflow-x:auto;scrollbar-width:none;flex-shrink:0;
+}
+#mode-bar::-webkit-scrollbar{display:none}
+.mode-pill{
+  flex-shrink:0;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;
+  border:1px solid var(--border);background:transparent;color:var(--muted);
+  cursor:pointer;transition:all 0.15s;
+}
+.mode-pill.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 0 12px rgba(79,140,255,0.3)}
 
-  /* Code blocks inside messages */
-  .bubble pre {
-    background: #0d0d15; border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px; margin-top: 8px; overflow-x: auto; font-size: 12px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-  }
-  .bubble code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+#messages{
+  flex:1;overflow-y:auto;padding:12px 14px 6px;
+  display:flex;flex-direction:column;gap:12px;
+  scroll-behavior:smooth;overscroll-behavior:contain;
+}
+#messages::-webkit-scrollbar{width:2px}
+#messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 
-  /* ── Thinking indicator ── */
-  #thinking {
-    display: none; align-self: flex-start;
-    background: var(--bg3); border: 1px solid var(--border);
-    border-radius: var(--radius); border-bottom-left-radius: 4px;
-    padding: 12px 16px;
-  }
-  #thinking.show { display: flex; gap: 5px; align-items: center; animation: fadeUp 0.2s ease; }
-  .dot-loader span {
-    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-    background: var(--accent); animation: dotBounce 1.2s ease-in-out infinite;
-  }
-  .dot-loader span:nth-child(2) { animation-delay: 0.2s; }
-  .dot-loader span:nth-child(3) { animation-delay: 0.4s; }
+.msg{display:flex;flex-direction:column;max-width:86%;animation:fadeUp 0.2s ease}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.bot{align-self:flex-start;align-items:flex-start}
+.msg.system{align-self:center;align-items:center;max-width:100%}
+.msg.error{align-self:flex-start;align-items:flex-start}
 
-  /* ── Quick actions ── */
-  #quick-actions {
-    display: flex; gap: 8px; padding: 6px 14px;
-    overflow-x: auto; scrollbar-width: none; flex-shrink: 0;
-  }
-  #quick-actions::-webkit-scrollbar { display: none; }
-  .quick-btn {
-    flex-shrink: 0; display: flex; align-items: center; gap: 5px;
-    padding: 7px 13px; border-radius: 20px; font-size: 12px;
-    border: 1px solid var(--border); background: var(--bg2); color: var(--muted);
-    cursor: pointer; transition: all 0.15s; white-space: nowrap;
-    font-family: var(--font);
-  }
-  .quick-btn:hover { border-color: var(--accent); color: var(--text); }
-  .quick-btn .icon { font-size: 13px; }
+.bubble{
+  padding:11px 15px;border-radius:var(--radius);
+  font-size:14px;line-height:1.6;word-break:break-word;white-space:pre-wrap;
+}
+.msg.user .bubble{
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;border-bottom-right-radius:4px;
+}
+.msg.bot .bubble{
+  background:var(--bg3);border:1px solid var(--border);
+  border-bottom-left-radius:4px;color:var(--text);
+}
+.msg.system .bubble{
+  background:rgba(79,140,255,0.08);border:1px solid rgba(79,140,255,0.2);
+  font-size:12px;color:var(--text2);padding:6px 14px;border-radius:20px;
+}
+.msg.error .bubble{
+  background:rgba(255,79,106,0.1);border:1px solid rgba(255,79,106,0.25);
+  color:var(--red);border-bottom-left-radius:4px;
+}
+.msg-meta{display:flex;align-items:center;gap:8px;margin-top:4px;padding:0 4px}
+.msg-time{font-size:10px;color:var(--muted)}
+.msg-copy{font-size:11px;color:var(--muted);cursor:pointer;padding:2px 6px;border-radius:6px;background:var(--bg3);border:none;opacity:0;transition:opacity 0.2s}
+.msg:hover .msg-copy{opacity:1}
+.msg-copy:hover{color:var(--accent)}
 
-  /* ── Automation panel ── */
-  #auto-panel {
-    display: none; flex-direction: column;
-    background: var(--bg2); border-top: 1px solid var(--border);
-    max-height: 240px; overflow-y: auto; flex-shrink: 0;
-  }
-  #auto-panel.show { display: flex; }
-  .auto-category { padding: 8px 14px 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
-  .auto-task {
-    padding: 9px 16px; font-size: 13px; cursor: pointer;
-    border-bottom: 1px solid var(--border); display: flex;
-    align-items: center; gap: 8px; transition: background 0.15s;
-  }
-  .auto-task:hover { background: var(--bg3); }
-  .auto-task .task-name { color: var(--accent); font-family: monospace; font-size: 12px; }
-  .auto-task .task-desc { color: var(--muted); font-size: 12px; }
+/* Thinking dots */
+.thinking-wrap{align-self:flex-start}
+.thinking{display:flex;gap:5px;padding:14px 18px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);border-bottom-left-radius:4px}
+.thinking span{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:bounce 1.2s infinite}
+.thinking span:nth-child(2){animation-delay:.2s}
+.thinking span:nth-child(3){animation-delay:.4s}
 
-  /* ── Input bar ── */
-  #input-bar {
-    display: flex; align-items: flex-end; gap: 8px;
-    padding: 10px 14px 12px; border-top: 1px solid var(--border);
-    background: var(--bg); flex-shrink: 0;
-  }
-  #input-wrap { flex: 1; position: relative; }
-  #input {
-    width: 100%; min-height: 42px; max-height: 120px; resize: none;
-    background: var(--bg3); border: 1px solid var(--border);
-    border-radius: 22px; padding: 11px 46px 11px 16px;
-    font-size: 15px; color: var(--text); font-family: var(--font);
-    outline: none; transition: border-color 0.2s; line-height: 1.4;
-    scrollbar-width: none;
-  }
-  #input:focus { border-color: var(--accent); }
-  #input::placeholder { color: var(--muted); }
+/* Input area */
+#input-wrap{
+  padding:10px 12px;padding-bottom:max(10px,var(--safe-bottom));
+  border-top:1px solid var(--border);flex-shrink:0;
+  background:var(--bg);
+}
+#input-row{display:flex;gap:8px;align-items:flex-end}
+#msg-input{
+  flex:1;background:var(--bg3);border:1.5px solid var(--border);
+  border-radius:22px;padding:11px 16px;color:var(--text);font-size:14px;
+  resize:none;outline:none;max-height:120px;min-height:44px;
+  line-height:1.45;transition:border-color 0.2s;
+}
+#msg-input::placeholder{color:var(--muted)}
+#msg-input:focus{border-color:rgba(79,140,255,0.5);background:var(--bg4)}
+.send-btn{
+  width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  flex-shrink:0;transition:all 0.2s;
+}
+#send-btn{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 0 16px rgba(79,140,255,0.3)}
+#send-btn:hover{transform:scale(1.05)}
+#send-btn:active{transform:scale(0.95)}
+#mic-btn{background:var(--bg3);border:1.5px solid var(--border);color:var(--muted)}
+#mic-btn.listening{background:var(--red);border-color:var(--red);color:#fff;animation:pulse 1s infinite}
 
-  #auto-toggle {
-    position: absolute; right: 12px; bottom: 9px;
-    background: none; border: none; cursor: pointer; color: var(--muted);
-    font-size: 18px; padding: 2px; transition: color 0.2s;
-  }
-  #auto-toggle.active { color: var(--accent); }
+/* ═══════════════════════════════════════════════════
+   VOICE PANEL
+═══════════════════════════════════════════════════ */
+#voice-panel{align-items:center;justify-content:space-around;padding:30px 24px;gap:0}
+.voice-top{display:flex;flex-direction:column;align-items:center;gap:16px;flex:1;justify-content:center}
+#voice-orb{
+  width:130px;height:130px;border-radius:50%;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:52px;
+  background:var(--bg3);border:2px solid var(--border);
+  transition:all 0.3s;box-shadow:0 0 40px rgba(79,140,255,0.15);
+}
+#voice-orb:hover{transform:scale(1.03)}
+#voice-orb.idle{background:var(--bg3)}
+#voice-orb.listening{
+  background:radial-gradient(circle at 40% 40%,#ff6b8a,var(--red));
+  border-color:var(--red);box-shadow:0 0 60px rgba(255,79,106,0.4);
+  animation:voicepulse 1s ease-in-out infinite;
+}
+#voice-orb.thinking{
+  background:radial-gradient(circle at 40% 40%,var(--yellow),var(--orange));
+  border-color:var(--yellow);box-shadow:0 0 60px rgba(255,217,79,0.4);
+  animation:voicepulse 0.7s ease-in-out infinite;
+}
+#voice-orb.speaking{
+  background:radial-gradient(circle at 40% 40%,var(--green),var(--accent3));
+  border-color:var(--green);box-shadow:0 0 60px rgba(0,229,160,0.4);
+  animation:voicepulse 0.4s ease-in-out infinite;
+}
+#voice-label{font-size:15px;color:var(--text2);font-weight:500}
+#voice-hint-small{font-size:12px;color:var(--muted)}
+.voice-cards{width:100%;display:flex;flex-direction:column;gap:10px;flex:1;justify-content:flex-end}
+.voice-card{
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px;min-height:58px;
+}
+.voice-card-label{font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.voice-card-text{font-size:14px;color:var(--text);line-height:1.5}
+#voice-repeat-btn{
+  background:var(--bg3);border:1px solid var(--border);border-radius:12px;
+  padding:10px 20px;color:var(--text2);cursor:pointer;font-size:13px;
+  align-self:center;transition:all 0.2s;
+}
+#voice-repeat-btn:hover{border-color:var(--accent);color:var(--accent)}
 
-  .icon-btn {
-    width: 42px; height: 42px; border-radius: 50%; border: none;
-    cursor: pointer; display: flex; align-items: center; justify-content: center;
-    font-size: 18px; flex-shrink: 0; transition: all 0.15s;
-  }
-  #mic-btn {
-    background: var(--bg3); color: var(--muted);
-    border: 1px solid var(--border);
-  }
-  #mic-btn.recording {
-    background: var(--red); color: #fff; border-color: var(--red);
-    animation: pulse 1s ease-in-out infinite;
-    box-shadow: 0 0 16px rgba(255,79,106,0.5);
-  }
-  #send-btn {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: #fff;
-  }
-  #send-btn:disabled { opacity: 0.4; cursor: default; }
+/* ═══════════════════════════════════════════════════
+   FILE MANAGER
+═══════════════════════════════════════════════════ */
+#files-panel{flex-direction:column}
+#breadcrumb{
+  display:flex;align-items:center;gap:4px;padding:10px 14px;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+  overflow-x:auto;scrollbar-width:none;
+}
+#breadcrumb::-webkit-scrollbar{display:none}
+.bc-item{font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap;padding:3px 6px;border-radius:6px}
+.bc-item:hover{color:var(--accent);background:var(--bg3)}
+.bc-sep{color:var(--border);font-size:12px}
+.bc-item.active{color:var(--text);font-weight:600}
+#files-toolbar{
+  display:flex;align-items:center;gap:8px;padding:8px 14px;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+#file-search{
+  flex:1;background:var(--bg3);border:1px solid var(--border);
+  border-radius:20px;padding:7px 14px;color:var(--text);font-size:13px;outline:none;
+}
+#file-search::placeholder{color:var(--muted)}
+.tool-btn{
+  width:36px;height:36px;border-radius:10px;background:var(--bg3);
+  border:1px solid var(--border);color:var(--muted);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:16px;
+  flex-shrink:0;transition:all 0.2s;
+}
+.tool-btn:hover{border-color:var(--accent);color:var(--accent)}
+#files-list{flex:1;overflow-y:auto;padding:8px}
+.file-row{
+  display:flex;align-items:center;gap:12px;padding:10px 12px;
+  border-radius:var(--radius-sm);cursor:pointer;transition:background 0.15s;
+  border:1px solid transparent;
+}
+.file-row:hover,.file-row:active{background:var(--bg3);border-color:var(--border)}
+.file-row.selected{background:rgba(79,140,255,0.08);border-color:rgba(79,140,255,0.3)}
+.fi{font-size:24px;flex-shrink:0;width:32px;text-align:center}
+.fd{flex:1;min-width:0}
+.fn{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fm{font-size:11px;color:var(--muted);margin-top:2px}
+.fa{color:var(--muted);font-size:14px;flex-shrink:0}
+#files-fab{
+  position:absolute;bottom:80px;right:16px;
+  width:52px;height:52px;border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none;color:#fff;font-size:24px;cursor:pointer;
+  box-shadow:0 4px 20px rgba(79,140,255,0.4);
+  display:flex;align-items:center;justify-content:center;
+  transition:transform 0.2s;z-index:10;
+}
+#files-fab:hover{transform:scale(1.08) rotate(45deg)}
+#files-fab.open{transform:rotate(45deg)}
 
-  /* ── Animations ── */
-  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
-  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes dotBounce { 0%,80%,100% { transform: scale(0.8); opacity: 0.5; } 40% { transform: scale(1.2); opacity: 1; } }
+/* File context menu */
+#file-menu{
+  display:none;position:fixed;z-index:200;
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;
+  box-shadow:0 8px 32px rgba(0,0,0,0.5);min-width:160px;
+}
+#file-menu.show{display:block}
+.fm-item{
+  padding:12px 16px;font-size:14px;cursor:pointer;
+  display:flex;align-items:center;gap:10px;transition:background 0.15s;
+}
+.fm-item:hover{background:var(--bg4)}
+.fm-item.danger{color:var(--red)}
 
-  /* ── Voice wave ── */
-  #voice-wave {
-    display: none; position: absolute; bottom: 65px; left: 50%;
-    transform: translateX(-50%); background: var(--bg3);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 12px 20px; align-items: center; gap: 6px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  }
-  #voice-wave.show { display: flex; }
-  .wave-bar {
-    width: 3px; border-radius: 2px; background: var(--accent);
-    animation: waveAnim 0.8s ease-in-out infinite;
-  }
-  .wave-bar:nth-child(2) { animation-delay: 0.1s; }
-  .wave-bar:nth-child(3) { animation-delay: 0.2s; }
-  .wave-bar:nth-child(4) { animation-delay: 0.3s; }
-  .wave-bar:nth-child(5) { animation-delay: 0.2s; }
-  .wave-bar:nth-child(6) { animation-delay: 0.1s; }
-  @keyframes waveAnim { 0%,100% { height: 6px; } 50% { height: 24px; } }
-  #voice-label { font-size: 12px; color: var(--muted); margin-left: 6px; }
+/* ═══════════════════════════════════════════════════
+   CODE PANEL
+═══════════════════════════════════════════════════ */
+#code-panel{flex-direction:column}
+#code-top{padding:12px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+#code-lang-row{display:flex;gap:8px;align-items:center}
+.lang-chip{
+  padding:5px 12px;border-radius:20px;font-size:12px;font-weight:500;
+  border:1px solid var(--border);background:var(--bg3);color:var(--muted);
+  cursor:pointer;transition:all 0.15s;flex-shrink:0;
+}
+.lang-chip.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+#code-options{display:flex;gap:10px;align-items:center}
+.toggle-opt{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
+.toggle-opt input{accent-color:var(--accent);width:15px;height:15px}
+#code-body{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#code-prompt-wrap{padding:12px 14px 0;flex-shrink:0}
+#code-prompt{
+  width:100%;background:var(--bg3);border:1.5px solid var(--border);
+  border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);
+  font-size:14px;resize:none;outline:none;height:72px;line-height:1.5;
+  transition:border-color 0.2s;
+}
+#code-prompt:focus{border-color:rgba(79,140,255,0.5)}
+#code-existing-wrap{padding:10px 14px 0;flex-shrink:0}
+.code-label{font-size:11px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
+#code-existing{
+  width:100%;height:90px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);
+  font-size:13px;font-family:'Courier New',monospace;resize:none;outline:none;
+}
+#code-existing:focus{border-color:var(--border)}
+#code-results{flex:1;overflow-y:auto;padding:12px 14px}
+.code-result-block{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--radius-sm);margin-bottom:10px;overflow:hidden;
+}
+.crb-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px;border-bottom:1px solid var(--border);
+  background:var(--bg3);
+}
+.crb-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.crb-copy{
+  background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;
+  padding:3px 8px;border-radius:6px;transition:all 0.2s;
+}
+.crb-copy:hover{background:var(--bg4);color:var(--accent)}
+.crb-body{padding:12px 14px;font-size:13px;font-family:'Courier New',monospace;white-space:pre-wrap;line-height:1.6;color:var(--text)}
+.crb-body.prose{font-family:var(--font);font-size:14px}
+#code-gen-btn{
+  margin:0 14px 12px;padding:13px;border-radius:var(--radius);
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none;color:#fff;font-size:15px;font-weight:700;cursor:pointer;
+  flex-shrink:0;transition:all 0.2s;box-shadow:0 0 20px rgba(79,140,255,0.2);
+}
+#code-gen-btn:hover{box-shadow:0 0 30px rgba(79,140,255,0.35)}
+#code-gen-btn:disabled{opacity:0.5;cursor:not-allowed}
 
-  /* ── Toast ── */
-  #toast {
-    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
-    background: var(--bg3); border: 1px solid var(--border);
-    border-radius: 20px; padding: 8px 18px; font-size: 13px;
-    opacity: 0; transition: opacity 0.3s; pointer-events: none;
-    white-space: nowrap; z-index: 100;
-  }
-  #toast.show { opacity: 1; }
+/* ═══════════════════════════════════════════════════
+   SCHEDULE PANEL
+═══════════════════════════════════════════════════ */
+#schedule-panel{flex-direction:column}
+#sched-form{
+  padding:14px;border-bottom:1px solid var(--border);
+  flex-shrink:0;display:flex;flex-direction:column;gap:10px;
+}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.field-in{
+  background:var(--bg3);border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  padding:10px 14px;color:var(--text);font-size:14px;outline:none;width:100%;transition:border-color 0.2s;
+}
+.field-in:focus{border-color:rgba(79,140,255,0.5)}
+#sched-row2{display:flex;gap:8px}
+#sched-row2 .field{flex:1}
+#sched-submit{
+  padding:13px;border-radius:var(--radius);
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer;
+  transition:all 0.2s;
+}
+#sched-submit:hover{box-shadow:0 0 20px rgba(79,140,255,0.3)}
+#sched-list{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.sched-card{
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px;
+}
+.sc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.sc-name{font-size:14px;font-weight:600}
+.sc-badge{padding:3px 9px;border-radius:20px;font-size:11px;font-weight:500}
+.sc-badge.pending{background:rgba(255,217,79,0.15);color:var(--yellow)}
+.sc-badge.done{background:rgba(0,229,160,0.15);color:var(--green)}
+.sc-badge.error{background:rgba(255,79,106,0.15);color:var(--red)}
+.sc-badge.running{background:rgba(79,140,255,0.15);color:var(--accent)}
+.sc-cmd{font-size:12px;color:var(--muted);font-family:monospace;margin-bottom:6px}
+.sc-result{font-size:12px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:8px 10px;margin-top:6px;font-family:monospace}
+.sc-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:6px}
+.sc-del:hover{color:var(--red);background:rgba(255,79,106,0.1)}
 
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 3px; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+/* ═══════════════════════════════════════════════════
+   PLUGINS PANEL (marketplace)
+═══════════════════════════════════════════════════ */
+#plugins-panel{flex-direction:column}
+#plugin-tabs{
+  display:flex;gap:0;border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.ptab{
+  flex:1;padding:10px;text-align:center;font-size:13px;font-weight:500;
+  color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;
+}
+.ptab.active{color:var(--accent);border-bottom-color:var(--accent)}
+#plugin-search-wrap{padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+#plugin-search{
+  width:100%;background:var(--bg3);border:1px solid var(--border);
+  border-radius:20px;padding:8px 16px;color:var(--text);font-size:13px;outline:none;
+}
+#plugin-search::placeholder{color:var(--muted)}
+#plugin-list{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:10px}
+.plugin-card{
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px;transition:border-color 0.2s;
+}
+.plugin-card:hover{border-color:rgba(79,140,255,0.3)}
+.pc-header{display:flex;align-items:flex-start;gap:12px;margin-bottom:8px}
+.pc-icon{font-size:28px;flex-shrink:0}
+.pc-info{flex:1;min-width:0}
+.pc-name{font-size:14px;font-weight:700;margin-bottom:2px}
+.pc-author{font-size:11px;color:var(--muted)}
+.pc-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.pc-tag{padding:2px 8px;border-radius:20px;font-size:11px;background:var(--bg2);border:1px solid var(--border);color:var(--muted)}
+.pc-desc{font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:10px}
+.pc-footer{display:flex;align-items:center;justify-content:space-between}
+.pc-stats{font-size:11px;color:var(--muted)}
+.pc-btn{
+  padding:7px 16px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all 0.2s;
+}
+.pc-btn.install{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}
+.pc-btn.installed{background:rgba(0,229,160,0.15);color:var(--green);border:1px solid rgba(0,229,160,0.3)}
+.pc-btn.uninstall{background:rgba(255,79,106,0.1);color:var(--red);border:1px solid rgba(255,79,106,0.2)}
+.pc-btn:hover{transform:scale(1.03)}
+#installed-list{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+
+/* ═══════════════════════════════════════════════════
+   DEVICES PANEL (multi-device)
+═══════════════════════════════════════════════════ */
+#devices-panel{flex-direction:column}
+#this-device{
+  margin:14px;background:linear-gradient(135deg,rgba(79,140,255,0.15),rgba(124,79,255,0.15));
+  border:1px solid rgba(79,140,255,0.3);border-radius:var(--radius);padding:16px;flex-shrink:0;
+}
+.td-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.td-icon{font-size:28px}
+.td-title{font-size:15px;font-weight:700}
+.td-sub{font-size:12px;color:var(--muted)}
+.td-url{
+  background:var(--bg);border:1px solid var(--border);border-radius:10px;
+  padding:10px 14px;font-size:13px;font-family:monospace;color:var(--text2);
+  margin-bottom:10px;word-break:break-all;
+}
+.td-actions{display:flex;gap:8px}
+.td-btn{
+  flex:1;padding:9px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer;
+  text-align:center;transition:all 0.2s;
+}
+.td-btn:hover{border-color:var(--accent);color:var(--accent)}
+#devices-section{flex:1;overflow-y:auto;padding:0 14px 14px}
+.section-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px}
+#device-list{display:flex;flex-direction:column;gap:8px}
+.dev-card{
+  background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;
+  display:flex;align-items:center;gap:12px;
+}
+.dev-icon{font-size:26px;flex-shrink:0}
+.dev-info{flex:1}
+.dev-name{font-size:14px;font-weight:600}
+.dev-detail{font-size:12px;color:var(--muted);margin-top:2px}
+.dev-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dev-status.online{background:var(--green);box-shadow:0 0 8px var(--green)}
+.dev-status.offline{background:var(--muted)}
+#qr-section{margin:0 14px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center}
+.qr-title{font-size:13px;font-weight:600;margin-bottom:12px}
+#qr-img{font-size:100px;line-height:1;margin:0 auto}
+.qr-hint{font-size:12px;color:var(--muted);margin-top:10px}
+
+/* ═══════════════════════════════════════════════════
+   MODALS & OVERLAYS
+═══════════════════════════════════════════════════ */
+.overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);
+  z-index:100;backdrop-filter:blur(4px);
+  align-items:flex-end;
+}
+.overlay.show{display:flex}
+.sheet{
+  width:100%;max-width:560px;margin:0 auto;
+  background:var(--bg2);border-radius:24px 24px 0 0;
+  border:1px solid var(--border);border-bottom:none;
+  padding:20px 20px max(20px,var(--safe-bottom));
+  animation:slideUp 0.3s ease;max-height:85vh;overflow-y:auto;
+}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.sheet-handle{width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 20px}
+.sheet-title{font-size:18px;font-weight:700;margin-bottom:16px}
+
+/* Status modal */
+#status-modal .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px}
+.stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.stat-value{font-size:18px;font-weight:700}
+.stat-value.green{color:var(--green)}
+.stat-value.yellow{color:var(--yellow)}
+.stat-value.red{color:var(--red)}
+.stat-value.blue{color:var(--accent)}
+
+/* File viewer */
+#file-viewer .file-content{
+  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:14px;font-family:monospace;font-size:12px;white-space:pre-wrap;
+  color:var(--text);max-height:60vh;overflow-y:auto;
+}
+
+/* Notifications drawer */
+#notif-drawer .notif-item{
+  padding:12px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;
+}
+.notif-icon{font-size:20px;flex-shrink:0;margin-top:2px}
+.notif-text{flex:1}
+.notif-title{font-size:13px;font-weight:600;margin-bottom:2px}
+.notif-body{font-size:12px;color:var(--muted)}
+.notif-time{font-size:11px;color:var(--muted);margin-top:3px}
+#notif-clear{width:100%;padding:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;margin-top:8px}
+#notif-clear:hover{color:var(--red)}
+
+/* ═══════════════════════════════════════════════════
+   ANIMATIONS & UTILS
+═══════════════════════════════════════════════════ */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-7px)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes voicepulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+
+::-webkit-scrollbar{width:2px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+.empty-state{padding:40px 20px;text-align:center;color:var(--muted);font-size:14px}
+.empty-icon{font-size:48px;margin-bottom:12px;display:block}
 </style>
 </head>
 <body>
 <div id="app">
 
-  <!-- Header -->
-  <div id="header">
-    <div class="logo">
-      <div class="orb"></div>
-      <h1>Byte<span>Flow</span></h1>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;">
-      <span id="model-badge">loading...</span>
+<!-- ── Header ── -->
+<div id="header">
+  <div class="logo">
+    <div class="orb"></div>
+    <h1>Byte<span>Flow</span></h1>
+  </div>
+  <div id="header-right">
+    <div id="status-pill" onclick="openStatusModal()">
       <div id="status-dot"></div>
+      <span id="model-name">...</span>
+    </div>
+    <div id="notif-btn" onclick="openNotifDrawer()">
+      🔔<div id="notif-badge"></div>
     </div>
   </div>
-
-  <!-- Mode tabs -->
-  <div id="modes">
-    <button class="mode-btn active" data-mode="run">⚡ Jarvis</button>
-    <button class="mode-btn" data-mode="chat">💬 Chat</button>
-    <button class="mode-btn" data-mode="code">🐍 Code</button>
-    <button class="mode-btn" data-mode="search">🔍 Search</button>
-    <button class="mode-btn" data-mode="automate">🤖 Automate</button>
-  </div>
-
-  <!-- Messages -->
-  <div id="messages">
-    <div class="msg system">
-      <div class="bubble">ByteFlow is running on your laptop → control from anywhere</div>
-    </div>
-  </div>
-
-  <!-- Thinking -->
-  <div id="thinking">
-    <div class="dot-loader">
-      <span></span><span></span><span></span>
-    </div>
-  </div>
-
-  <!-- Quick actions -->
-  <div id="quick-actions">
-    <button class="quick-btn" onclick="sendQuick('What can you do?')"><span class="icon">🧠</span>Capabilities</button>
-    <button class="quick-btn" onclick="sendQuick('system info')"><span class="icon">💻</span>System</button>
-    <button class="quick-btn" onclick="sendQuick('git status .')"><span class="icon">🔀</span>Git Status</button>
-    <button class="quick-btn" onclick="sendQuick('open vscode')"><span class="icon">⚡</span>VSCode</button>
-    <button class="quick-btn" onclick="sendQuick('what time is it')"><span class="icon">🕐</span>Time</button>
-    <button class="quick-btn" onclick="sendQuick('today weather')"><span class="icon">🌤</span>Weather</button>
-  </div>
-
-  <!-- Automation panel (hidden by default) -->
-  <div id="auto-panel"></div>
-
-  <!-- Voice wave overlay -->
-  <div id="voice-wave">
-    <div class="wave-bar"></div>
-    <div class="wave-bar"></div>
-    <div class="wave-bar"></div>
-    <div class="wave-bar"></div>
-    <div class="wave-bar"></div>
-    <div class="wave-bar"></div>
-    <span id="voice-label">Listening…</span>
-  </div>
-
-  <!-- Input bar -->
-  <div id="input-bar">
-    <button class="icon-btn" id="mic-btn" title="Hold to speak">🎤</button>
-    <div id="input-wrap">
-      <textarea id="input" rows="1" placeholder="Ask ByteFlow anything…"></textarea>
-      <button id="auto-toggle" title="Automation tasks">⚙️</button>
-    </div>
-    <button class="icon-btn" id="send-btn">➤</button>
-  </div>
-
 </div>
-<div id="toast"></div>
+
+<!-- ── Nav ── -->
+<div id="nav">
+  <div class="nav-tab active" onclick="switchTab('chat')"><span class="ti">💬</span>Chat</div>
+  <div class="nav-tab" onclick="switchTab('voice')"><span class="ti">🎙️</span>Voice</div>
+  <div class="nav-tab" onclick="switchTab('files')"><span class="ti">📁</span>Files</div>
+  <div class="nav-tab" onclick="switchTab('code')"><span class="ti">🧑‍💻</span>Code</div>
+  <div class="nav-tab" onclick="switchTab('schedule')"><span class="ti">⏰</span>Tasks</div>
+  <div class="nav-tab" onclick="switchTab('plugins')"><span class="ti">🧩</span>Plugins</div>
+  <div class="nav-tab" onclick="switchTab('devices')"><span class="ti">📡</span>Devices</div>
+</div>
+
+<!-- ════════════════════ CHAT PANEL ════════════════════ -->
+<div class="panel active" id="chat-panel">
+  <div id="quick-actions">
+    <div class="qa-chip" onclick="quickSend('What can you do?')"><span class="ce">✨</span>Capabilities</div>
+    <div class="qa-chip" onclick="quickSend('Show system info')"><span class="ce">💻</span>System</div>
+    <div class="qa-chip" onclick="quickSend('Show git status of current directory')"><span class="ce">🌿</span>Git Status</div>
+    <div class="qa-chip" onclick="quickSend('List running processes')"><span class="ce">⚙️</span>Processes</div>
+    <div class="qa-chip" onclick="quickSend('What time is it?')"><span class="ce">🕐</span>Time</div>
+    <div class="qa-chip" onclick="quickSend('List files in home folder')"><span class="ce">📂</span>Files</div>
+  </div>
+  <div id="mode-bar">
+    <button class="mode-pill active" onclick="setMode(this,'run')">⚡ Auto</button>
+    <button class="mode-pill" onclick="setMode(this,'chat')">💬 Chat</button>
+    <button class="mode-pill" onclick="setMode(this,'code')">🧑‍💻 Code</button>
+    <button class="mode-pill" onclick="setMode(this,'search')">🔍 Search</button>
+  </div>
+  <div id="messages">
+    <div class="msg system"><div class="bubble">👋 ByteFlow is ready. What would you like to do?</div></div>
+  </div>
+  <div id="input-wrap">
+    <div id="input-row">
+      <button class="send-btn" id="mic-btn" onclick="toggleMic()">🎙️</button>
+      <textarea id="msg-input" placeholder="Message ByteFlow..." rows="1"
+        onkeydown="onKey(event)" oninput="resizeInput(this)"></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendChat()">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ VOICE PANEL ════════════════════ -->
+<div class="panel" id="voice-panel">
+  <div class="voice-top">
+    <div id="voice-orb" class="idle" onclick="toggleVoice()">🎙️</div>
+    <div id="voice-label">Tap to speak</div>
+    <div id="voice-hint-small">Powered by Web Speech API</div>
+  </div>
+  <div class="voice-cards">
+    <div class="voice-card">
+      <div class="voice-card-label">You said</div>
+      <div class="voice-card-text" id="v-transcript">—</div>
+    </div>
+    <div class="voice-card">
+      <div class="voice-card-label">ByteFlow</div>
+      <div class="voice-card-text" id="v-response">—</div>
+    </div>
+    <button id="voice-repeat-btn" onclick="repeatSpeak()">🔊 Repeat</button>
+  </div>
+</div>
+
+<!-- ════════════════════ FILES PANEL ════════════════════ -->
+<div class="panel" id="files-panel" style="position:relative">
+  <div id="breadcrumb"></div>
+  <div id="files-toolbar">
+    <input id="file-search" placeholder="Search files..." oninput="filterFiles(this.value)">
+    <button class="tool-btn" onclick="refreshFiles()" title="Refresh">↻</button>
+    <button class="tool-btn" onclick="goUp()" title="Up">↑</button>
+  </div>
+  <div id="files-list"></div>
+  <button id="files-fab" onclick="toggleFab()">＋</button>
+</div>
+
+<!-- ════════════════════ CODE PANEL ════════════════════ -->
+<div class="panel" id="code-panel">
+  <div id="code-top">
+    <div id="code-lang-row">
+      <div class="lang-chip active" onclick="setLang(this,'python')">🐍 Python</div>
+      <div class="lang-chip" onclick="setLang(this,'javascript')">📜 JS</div>
+      <div class="lang-chip" onclick="setLang(this,'bash')">⚙️ Bash</div>
+      <div class="lang-chip" onclick="setLang(this,'sql')">🗄️ SQL</div>
+      <div class="lang-chip" onclick="setLang(this,'html')">🌐 HTML</div>
+    </div>
+    <div id="code-options">
+      <label class="toggle-opt"><input type="checkbox" id="exec-chk"> Run code</label>
+      <label class="toggle-opt"><input type="checkbox" id="stream-chk" checked> Explain</label>
+    </div>
+  </div>
+  <div id="code-body">
+    <div id="code-prompt-wrap">
+      <div class="code-label">What do you want?</div>
+      <textarea id="code-prompt" placeholder="e.g. write a function to parse a CSV file..."></textarea>
+    </div>
+    <div id="code-existing-wrap">
+      <div class="code-label">Paste existing code to fix/review (optional)</div>
+      <textarea id="code-existing" placeholder="// paste code here..."></textarea>
+    </div>
+    <div id="code-results"></div>
+  </div>
+  <button id="code-gen-btn" onclick="genCode()">✦ Generate</button>
+</div>
+
+<!-- ════════════════════ SCHEDULE PANEL ════════════════════ -->
+<div class="panel" id="schedule-panel">
+  <div id="sched-form">
+    <div class="field">
+      <label>Task name</label>
+      <input class="field-in" id="sn" placeholder="e.g. Morning backup">
+    </div>
+    <div class="field">
+      <label>Shell command</label>
+      <input class="field-in" id="sc" placeholder="e.g. git -C ~/project pull">
+    </div>
+    <div id="sched-row2">
+      <div class="field">
+        <label>Delay (seconds)</label>
+        <input class="field-in" id="sd" type="number" value="0" min="0">
+      </div>
+    </div>
+    <button id="sched-submit" onclick="addSchedule()">⏰ Schedule Task</button>
+  </div>
+  <div id="sched-list"></div>
+</div>
+
+<!-- ════════════════════ PLUGINS PANEL ════════════════════ -->
+<div class="panel" id="plugins-panel">
+  <div id="plugin-tabs">
+    <div class="ptab active" onclick="switchPluginTab('marketplace',this)">🛒 Marketplace</div>
+    <div class="ptab" onclick="switchPluginTab('installed',this)">✅ Installed</div>
+    <div class="ptab" onclick="switchPluginTab('create',this)">✏️ Create</div>
+  </div>
+  <div id="plugin-search-wrap">
+    <input id="plugin-search" placeholder="Search plugins..." oninput="filterPlugins(this.value)">
+  </div>
+  <div id="plugin-list"></div>
+  <div id="installed-list" style="display:none;flex:1;overflow-y:auto;padding:10px 14px"></div>
+  <div id="create-plugin" style="display:none;flex:1;overflow-y:auto;padding:14px;flex-direction:column;gap:10px"></div>
+</div>
+
+<!-- ════════════════════ DEVICES PANEL ════════════════════ -->
+<div class="panel" id="devices-panel">
+  <div id="this-device">
+    <div class="td-header">
+      <span class="td-icon">📱</span>
+      <div><div class="td-title">This Device</div><div class="td-sub" id="this-dev-type">Phone / Tablet</div></div>
+    </div>
+    <div class="td-url" id="core-url-display">Connecting...</div>
+    <div class="td-actions">
+      <button class="td-btn" onclick="copyUrl()">📋 Copy URL</button>
+      <button class="td-btn" onclick="openStatus()">📊 Status</button>
+      <button class="td-btn" onclick="window.location.reload()">🔄 Refresh</button>
+    </div>
+  </div>
+  <div id="devices-section">
+    <div class="section-title">Connected Devices</div>
+    <div id="device-list"></div>
+    <div class="section-title">Add New Device</div>
+    <div id="qr-section">
+      <div class="qr-title">Scan to connect another device</div>
+      <div id="qr-img">📷</div>
+      <div class="qr-hint" id="qr-url-text">Generating QR code...</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /app -->
+
+<!-- ════════════════════ MODALS ════════════════════ -->
+
+<!-- Status modal -->
+<div class="overlay" id="status-modal" onclick="closeModal('status-modal')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">System Status</div>
+    <div class="stat-grid" id="stat-grid"></div>
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="td-btn" onclick="clearMemory()" style="flex:1">🗑️ Clear Memory</button>
+      <button class="td-btn" onclick="closeModal('status-modal')" style="flex:1">✕ Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- File viewer -->
+<div class="overlay" id="file-viewer" onclick="closeModal('file-viewer')">
+  <div class="sheet" onclick="event.stopPropagation()" style="max-height:90vh">
+    <div class="sheet-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div class="sheet-title" id="fv-title" style="margin:0"></div>
+      <button class="td-btn" onclick="closeModal('file-viewer')" style="padding:6px 12px">✕</button>
+    </div>
+    <div class="file-content" id="fv-content"></div>
+  </div>
+</div>
+
+<!-- FAB menu -->
+<div class="overlay" id="fab-menu" onclick="closeModal('fab-menu')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">New</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="td-btn" onclick="newFile()" style="padding:14px;font-size:14px;text-align:left">📄 New File</button>
+      <button class="td-btn" onclick="newFolder()" style="padding:14px;font-size:14px;text-align:left">📁 New Folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notifications -->
+<div class="overlay" id="notif-drawer" onclick="closeModal('notif-drawer')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Notifications</div>
+    <div id="notif-items"></div>
+    <button id="notif-clear" onclick="clearNotifs()">Clear all</button>
+  </div>
+</div>
+
+<!-- File context menu -->
+<div id="file-menu">
+  <div class="fm-item" onclick="fmOpen()">📂 Open</div>
+  <div class="fm-item" onclick="fmEdit()">✏️ Edit in Chat</div>
+  <div class="fm-item" onclick="fmCopyPath()">📋 Copy Path</div>
+  <div class="fm-item danger" onclick="fmDelete()">🗑️ Delete</div>
+</div>
 
 <script>
-// ── State ──────────────────────────────────────────────────────────────────────
-let mode = 'run';
-let ws = null;
-let isRecording = false;
-let recognition = null;
-let autoTasksLoaded = false;
-let autoPanelOpen = false;
-const BASE = window.location.origin;
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+const API = '';
+let chatMode = 'run';
+let currentPath = '~';
+let allFiles = [];
+let codeLang = 'python';
+let voiceActive = false;
+let voiceRec = null;
+let lastSpeak = '';
+let _notifications = [];
+let _installedPlugins = new Set();
+let _contextFile = null;
+let _statusData = {};
 
-// ── DOM refs ──────────────────────────────────────────────────────────────────
-const messagesEl = document.getElementById('messages');
-const inputEl    = document.getElementById('input');
-const sendBtn    = document.getElementById('send-btn');
-const micBtn     = document.getElementById('mic-btn');
-const thinkingEl = document.getElementById('thinking');
-const statusDot  = document.getElementById('status-dot');
-const modelBadge = document.getElementById('model-badge');
-const autoPanel  = document.getElementById('auto-panel');
-const autoToggle = document.getElementById('auto-toggle');
-const voiceWave  = document.getElementById('voice-wave');
+const PLUGINS = [
+  {id:'weather',name:'Weather',icon:'🌤️',author:'ByteFlow Team',desc:'Get real-time weather for any city. Ask "weather in Tokyo" or "is it raining in London?"',tags:['utility','api'],downloads:'1.2k',rating:'4.8'},
+  {id:'github',name:'GitHub Tools',icon:'🐙',author:'ByteFlow Team',desc:'Manage GitHub repos, issues, PRs, and gists without leaving ByteFlow.',tags:['devtools','git'],downloads:'3.4k',rating:'4.9'},
+  {id:'notes',name:'Quick Notes',icon:'📝',author:'ByteFlow Team',desc:'Persistent note-taking with tags, search, and markdown support.',tags:['productivity'],downloads:'2.1k',rating:'4.7'},
+  {id:'pomodoro',name:'Pomodoro Timer',icon:'🍅',author:'Community',desc:'Built-in Pomodoro timer with desktop notifications and session tracking.',tags:['productivity','timer'],downloads:'890',rating:'4.6'},
+  {id:'docker',name:'Docker Manager',icon:'🐳',author:'ByteFlow Team',desc:'List containers, view logs, start/stop services, and manage images from your phone.',tags:['devtools','docker'],downloads:'1.8k',rating:'4.7'},
+  {id:'clipboard',name:'Clipboard Sync',icon:'📋',author:'Community',desc:'Sync clipboard content between your phone and laptop instantly.',tags:['utility'],downloads:'2.9k',rating:'4.5'},
+  {id:'snippets',name:'Code Snippets',icon:'✂️',author:'ByteFlow Team',desc:'Save, search, and insert code snippets. Supports 30+ languages with syntax highlighting.',tags:['devtools','productivity'],downloads:'1.5k',rating:'4.8'},
+  {id:'translate',name:'Translator',icon:'🌐',author:'Community',desc:'Translate text between 100+ languages. Useful for international projects.',tags:['utility','language'],downloads:'760',rating:'4.4'},
+  {id:'sysmon',name:'System Monitor',icon:'📊',author:'ByteFlow Team',desc:'Real-time CPU, memory, disk, and network monitoring with charts.',tags:['system','monitoring'],downloads:'2.2k',rating:'4.9'},
+  {id:'terminal',name:'Terminal Access',icon:'⌨️',author:'ByteFlow Team',desc:'Full terminal emulator in your browser. SSH, run commands, manage processes.',tags:['devtools','system'],downloads:'4.1k',rating:'4.9'},
+];
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-checkStatus();
-connectWS();
-setInterval(checkStatus, 30000);
+// ════════════════════════════════════════════════════════════
+// TABS
+// ════════════════════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(name + '-panel').classList.add('active');
+  const tabs = ['chat','voice','files','code','schedule','plugins','devices'];
+  document.querySelectorAll('.nav-tab')[tabs.indexOf(name)]?.classList.add('active');
+  if (name === 'files') browseDir(currentPath);
+  if (name === 'schedule') loadSchedule();
+  if (name === 'plugins') renderPlugins();
+  if (name === 'devices') initDevices();
+}
 
-// ── Status ────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// STATUS
+// ════════════════════════════════════════════════════════════
 async function checkStatus() {
   try {
-    const r = await fetch(`${BASE}/api/status`);
-    const d = await r.json();
-    statusDot.className = 'online';
-    modelBadge.textContent = d.model || 'byteflow';
-    if (!autoTasksLoaded && d.automator_ready) loadAutoTasks();
+    const r = await fetch(`${API}/status`);
+    _statusData = await r.json();
+    document.getElementById('model-name').textContent = _statusData.model || '?';
+    setDot(_statusData.status === 'online' ? 'online' : 'error');
+    document.getElementById('core-url-display').textContent = window.location.href;
   } catch {
-    statusDot.className = 'error';
-    modelBadge.textContent = 'offline';
+    setDot('error');
+    document.getElementById('model-name').textContent = 'offline';
   }
 }
 
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => {};
-  ws.onmessage = e => {
-    const msg = JSON.parse(e.data);
-    if (msg.event === 'thinking') setThinking(true);
-    if (msg.event === 'response' || msg.event === 'automate_result') setThinking(false);
-    if (msg.event === 'error') { setThinking(false); showToast('⚠ ' + msg.data.message); }
-  };
-  ws.onclose = () => setTimeout(connectWS, 3000);
+function setDot(s) {
+  const d = document.getElementById('status-dot');
+  d.className = s;
 }
 
-// ── Mode tabs ──────────────────────────────────────────────────────────────────
-document.querySelectorAll('.mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    mode = btn.dataset.mode;
+async function openStatusModal() {
+  await checkStatus();
+  const d = _statusData;
+  document.getElementById('stat-grid').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value green">${d.status || '?'}</div></div>
+    <div class="stat-card"><div class="stat-label">Model</div><div class="stat-value blue">${d.model || '?'}</div></div>
+    <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value">${d.uptime_human || '?'}</div></div>
+    <div class="stat-card"><div class="stat-label">Requests</div><div class="stat-value">${d.requests_total ?? 0}</div></div>
+    <div class="stat-card"><div class="stat-label">Errors</div><div class="stat-value ${d.errors_total > 0 ? 'red' : 'green'}">${d.errors_total ?? 0}</div></div>
+    <div class="stat-card"><div class="stat-label">Tasks</div><div class="stat-value">${d.automator_tasks ?? 0}</div></div>
+  `;
+  openModal('status-modal');
+}
 
-    if (mode === 'automate') {
-      autoPanel.classList.add('show');
-      autoPanelOpen = true;
-      autoToggle.classList.add('active');
-      inputEl.placeholder = 'Search automation tasks…';
-    } else {
-      autoPanel.classList.remove('show');
-      autoPanelOpen = false;
-      autoToggle.classList.remove('active');
-      const placeholders = {
-        run: 'Ask ByteFlow anything…',
-        chat: 'Chat with ByteFlow…',
-        code: 'Describe the code you need…',
-        search: 'Search the web…',
-      };
-      inputEl.placeholder = placeholders[mode] || 'Ask ByteFlow anything…';
-    }
-  });
-});
+async function clearMemory() {
+  await fetch(`${API}/memory`, {method:'DELETE'});
+  pushNotif('Memory cleared', 'All conversation history has been cleared.', '🗑️');
+  closeModal('status-modal');
+}
 
-// ── Auto-panel toggle ──────────────────────────────────────────────────────────
-autoToggle.addEventListener('click', () => {
-  autoPanelOpen = !autoPanelOpen;
-  autoPanel.classList.toggle('show', autoPanelOpen);
-  autoToggle.classList.toggle('active', autoPanelOpen);
-});
+// ════════════════════════════════════════════════════════════
+// CHAT
+// ════════════════════════════════════════════════════════════
+function setMode(btn, m) {
+  chatMode = m;
+  document.querySelectorAll('.mode-pill').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
 
-// ── Load automation tasks ──────────────────────────────────────────────────────
-async function loadAutoTasks() {
+function quickSend(text) {
+  document.getElementById('msg-input').value = text;
+  sendChat();
+}
+
+function onKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function resizeInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function addMsg(role, text) {
+  const wrap = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  const t = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const copyBtn = role === 'bot' ? `<button class="msg-copy" onclick="copyText(this,'${esc(text)}')">Copy</button>` : '';
+  el.innerHTML = `<div class="bubble">${esc(text)}</div><div class="msg-meta"><span class="msg-time">${t}</span>${copyBtn}</div>`;
+  wrap.appendChild(el);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function addThinking() {
+  const wrap = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = 'msg thinking-wrap'; el.id = 'thinking';
+  el.innerHTML = '<div class="thinking"><span></span><span></span><span></span></div>';
+  wrap.appendChild(el); wrap.scrollTop = wrap.scrollHeight;
+}
+
+function removeThinking() { document.getElementById('thinking')?.remove(); }
+
+async function sendChat() {
+  const inp = document.getElementById('msg-input');
+  const text = inp.value.trim(); if (!text) return;
+  inp.value = ''; inp.style.height = 'auto';
+  addMsg('user', text); addThinking(); setDot('thinking');
   try {
-    const r = await fetch(`${BASE}/api/tasks`);
+    const r = await fetch(`${API}/chat`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message:text, mode:chatMode})
+    });
     const d = await r.json();
-    autoTasksLoaded = true;
-    renderAutoTasks(d.tasks);
-  } catch {}
-}
-
-function renderAutoTasks(tasks) {
-  const cats = {};
-  tasks.forEach(t => { (cats[t.category] = cats[t.category] || []).push(t); });
-  autoPanel.innerHTML = '';
-  Object.entries(cats).forEach(([cat, items]) => {
-    const h = document.createElement('div');
-    h.className = 'auto-category'; h.textContent = cat;
-    autoPanel.appendChild(h);
-    items.forEach(t => {
-      const el = document.createElement('div');
-      el.className = 'auto-task';
-      el.innerHTML = `<div>
-        <div class="task-name">${t.name}</div>
-        <div class="task-desc">${t.description}</div>
-      </div>`;
-      el.addEventListener('click', () => {
-        inputEl.value = t.name + ' ';
-        inputEl.focus();
-        autoPanel.classList.remove('show');
-        autoPanelOpen = false;
-      });
-      autoPanel.appendChild(el);
-    });
-  });
-}
-
-// Filter tasks as user types
-inputEl.addEventListener('input', () => {
-  if (mode === 'automate' && autoPanelOpen) {
-    const q = inputEl.value.toLowerCase();
-    autoPanel.querySelectorAll('.auto-task').forEach(el => {
-      const name = el.querySelector('.task-name')?.textContent.toLowerCase() || '';
-      const desc = el.querySelector('.task-desc')?.textContent.toLowerCase() || '';
-      el.style.display = (name.includes(q) || desc.includes(q)) ? '' : 'none';
-    });
+    removeThinking();
+    if (d.ok === false) { addMsg('error', '⚠️ ' + d.error); }
+    else { addMsg('bot', d.response || '(no response)'); }
+  } catch(e) {
+    removeThinking();
+    addMsg('error', '⚠️ Cannot reach ByteFlow. Is the server running?');
   }
-  autoResize();
-});
-
-// ── Send message ──────────────────────────────────────────────────────────────
-function autoResize() {
-  inputEl.style.height = 'auto';
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+  setDot('online');
 }
 
-sendBtn.addEventListener('click', send);
-inputEl.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-});
-
-async function send() {
-  const text = inputEl.value.trim();
-  if (!text || sendBtn.disabled) return;
-
-  appendMsg(text, 'user');
-  inputEl.value = '';
-  autoResize();
-  sendBtn.disabled = true;
-  setThinking(true);
-  statusDot.className = 'thinking';
-
-  try {
-    if (mode === 'automate') {
-      await sendAutomate(text);
-    } else {
-      await sendChat(text);
-    }
-  } catch (err) {
-    appendMsg('⚠ Error: ' + err.message, 'system');
-  } finally {
-    setThinking(false);
-    sendBtn.disabled = false;
-    statusDot.className = 'online';
-  }
-}
-
-async function sendChat(text) {
-  const r = await fetch(`${BASE}/api/chat`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ message: text, mode }),
-  });
-  if (!r.ok) throw new Error(`Server error ${r.status}`);
-  const d = await r.json();
-  appendMsg(d.response, 'bot');
-}
-
-async function sendAutomate(text) {
-  // Try direct task call first, then natural language
-  const parts = text.split(/\s+/);
-  const taskName = parts[0];
-
-  const r = await fetch(`${BASE}/api/automate/nl`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ goal: text }),
-  });
-  const d = await r.json();
-  const result = typeof d.result === 'object' ? JSON.stringify(d.result, null, 2) : d.result;
-  const label = d.task ? `[${d.task}] ` : '';
-  appendMsg(label + result, 'bot');
-}
-
-function sendQuick(text) {
-  inputEl.value = text;
-  send();
-}
-
-// ── Append message ────────────────────────────────────────────────────────────
-function appendMsg(text, role) {
-  const wrap = document.createElement('div');
-  wrap.className = 'msg ' + role;
-
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.innerHTML = formatText(text);
-
-  const time = document.createElement('div');
-  time.className = 'msg-time';
-  time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  wrap.appendChild(bubble);
-  wrap.appendChild(time);
-  messagesEl.appendChild(wrap);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function formatText(text) {
-  if (typeof text !== 'string') text = JSON.stringify(text, null, 2);
-  // Code blocks
-  text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code>${escHtml(code.trim())}</code></pre>`);
-  // Inline code
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Newlines
-  text = text.replace(/\n/g, '<br>');
-  return text;
-}
-
-function escHtml(t) {
-  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ── Thinking state ────────────────────────────────────────────────────────────
-function setThinking(on) {
-  thinkingEl.classList.toggle('show', on);
-  if (on) messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-// ── Voice input (Web Speech API) ──────────────────────────────────────────────
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-if (SpeechRecognition) {
-  recognition = new SpeechRecognition();
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
-
-  recognition.onresult = e => {
-    let transcript = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      transcript += e.results[i][0].transcript;
-    }
-    inputEl.value = transcript;
-    autoResize();
-    if (e.results[e.results.length - 1].isFinal) {
-      stopRecording();
-      setTimeout(send, 300);
-    }
+// ════════════════════════════════════════════════════════════
+// VOICE (chat mic)
+// ════════════════════════════════════════════════════════════
+let micActive = false, micRec = null;
+function toggleMic() {
+  if (!checkSpeechSupport()) return;
+  if (micActive) { micRec?.stop(); return; }
+  micRec = newRecognition();
+  micRec.onresult = e => {
+    document.getElementById('msg-input').value = e.results[0][0].transcript;
+    sendChat();
   };
-
-  recognition.onerror = () => stopRecording();
-  recognition.onend = () => stopRecording();
+  micRec.onend = () => { micActive = false; document.getElementById('mic-btn').classList.remove('listening'); };
+  micRec.start(); micActive = true;
+  document.getElementById('mic-btn').classList.add('listening');
 }
 
-micBtn.addEventListener('click', () => {
-  if (!recognition) { showToast('Speech not supported in this browser'); return; }
-  if (isRecording) stopRecording();
-  else startRecording();
-});
-
-function startRecording() {
-  isRecording = true;
-  micBtn.classList.add('recording');
-  voiceWave.classList.add('show');
-  recognition.start();
+// ════════════════════════════════════════════════════════════
+// VOICE PANEL
+// ════════════════════════════════════════════════════════════
+function toggleVoice() {
+  if (!checkSpeechSupport()) { setVoiceState('idle','Not supported — use Chrome'); return; }
+  if (voiceActive) { voiceRec?.stop(); return; }
+  voiceRec = newRecognition();
+  voiceRec.interimResults = true;
+  voiceRec.onresult = e => {
+    const t = Array.from(e.results).map(r=>r[0].transcript).join('');
+    document.getElementById('v-transcript').textContent = t;
+    if (e.results[e.results.length-1].isFinal) processVoice(t);
+  };
+  voiceRec.onend = () => { voiceActive = false; setVoiceState('idle','Tap to speak'); };
+  voiceRec.start(); voiceActive = true;
+  setVoiceState('listening','Listening...');
+  document.getElementById('v-transcript').textContent = '—';
+  document.getElementById('v-response').textContent = '—';
 }
 
-function stopRecording() {
-  isRecording = false;
-  micBtn.classList.remove('recording');
-  voiceWave.classList.remove('show');
-  try { recognition.stop(); } catch {}
+async function processVoice(text) {
+  setVoiceState('thinking','Thinking...');
+  try {
+    const r = await fetch(`${API}/voice`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text})
+    });
+    const d = await r.json();
+    const resp = d.response || d.error || 'No response';
+    document.getElementById('v-response').textContent = resp;
+    lastSpeak = resp;
+    setVoiceState('speaking','Speaking...');
+    speak(resp, ()=>setVoiceState('idle','Tap to speak'));
+  } catch(e) {
+    setVoiceState('idle','Error — try again');
+    document.getElementById('v-response').textContent = 'Error: ' + e.message;
+  }
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-function showToast(msg, duration = 2500) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), duration);
+function setVoiceState(state, label) {
+  document.getElementById('voice-orb').className = state;
+  document.getElementById('voice-label').textContent = label;
 }
+
+function repeatSpeak() { if (lastSpeak) speak(lastSpeak); }
+
+function speak(text, cb) {
+  const s = window.speechSynthesis; if (!s) { cb?.(); return; }
+  s.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.onend = cb;
+  s.speak(u);
+}
+
+function newRecognition() {
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const r = new R();
+  r.lang = 'en-US'; r.interimResults = false;
+  return r;
+}
+
+function checkSpeechSupport() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+// ════════════════════════════════════════════════════════════
+// FILES
+// ════════════════════════════════════════════════════════════
+async function browseDir(path) {
+  currentPath = path;
+  updateBreadcrumb(path);
+  const list = document.getElementById('files-list');
+  list.innerHTML = '<div class="empty-state"><span class="empty-icon">⏳</span>Loading...</div>';
+  try {
+    const r = await fetch(`${API}/files/browse?path=${encodeURIComponent(path)}`);
+    const d = await r.json();
+    if (!d.ok) { list.innerHTML = `<div class="empty-state"><span class="empty-icon">⛔</span>${d.error}</div>`; return; }
+    allFiles = [...d.folders.map(f=>({...f,isDir:true})), ...d.files];
+    renderFiles(allFiles);
+  } catch(e) {
+    list.innerHTML = `<div class="empty-state"><span class="empty-icon">⚠️</span>${e.message}</div>`;
+  }
+}
+
+function renderFiles(files) {
+  const list = document.getElementById('files-list');
+  if (!files.length) { list.innerHTML = '<div class="empty-state"><span class="empty-icon">📭</span>Empty folder</div>'; return; }
+  list.innerHTML = files.map(f => {
+    const icon = f.isDir ? '📁' : fileIcon(f.ext||'');
+    const meta = f.isDir ? 'Folder' : `${f.size_human||''} · ${f.modified||''}`;
+    return `<div class="file-row" onclick="${f.isDir?`browseDir('${esc(f.path)}')`:`viewFile('${esc(f.path)}','${esc(f.name)}')`}"
+      oncontextmenu="fileCtxMenu(event,'${esc(f.path)}','${esc(f.name)}')">
+      <div class="fi">${icon}</div>
+      <div class="fd"><div class="fn">${esc(f.name)}</div><div class="fm">${meta}</div></div>
+      <div class="fa">›</div>
+    </div>`;
+  }).join('');
+}
+
+function filterFiles(q) {
+  if (!q) { renderFiles(allFiles); return; }
+  renderFiles(allFiles.filter(f=>f.name.toLowerCase().includes(q.toLowerCase())));
+}
+
+function updateBreadcrumb(path) {
+  const bc = document.getElementById('breadcrumb');
+  const parts = path.replace(/^~/, 'Home').split('/').filter(Boolean);
+  bc.innerHTML = parts.map((p,i) => {
+    const isLast = i === parts.length - 1;
+    return `${i>0?'<span class="bc-sep">›</span>':''}<span class="bc-item${isLast?' active':''}">${esc(p)}</span>`;
+  }).join('');
+}
+
+function goUp() {
+  const p = currentPath;
+  if (p === '~' || p === '/') return;
+  const parts = p.split('/');
+  parts.pop();
+  browseDir(parts.join('/') || '~');
+}
+
+function refreshFiles() { browseDir(currentPath); }
+
+async function viewFile(path, name) {
+  document.getElementById('fv-title').textContent = name;
+  document.getElementById('fv-content').textContent = 'Loading...';
+  openModal('file-viewer');
+  try {
+    const r = await fetch(`${API}/files`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path, operation:'read'})
+    });
+    const d = await r.json();
+    document.getElementById('fv-content').textContent = d.result || d.error || '(empty)';
+  } catch(e) {
+    document.getElementById('fv-content').textContent = 'Error: ' + e.message;
+  }
+}
+
+function fileIcon(ext) {
+  const m={'.py':'🐍','.js':'📜','.ts':'📘','.html':'🌐','.css':'🎨',
+    '.json':'📋','.md':'📝','.txt':'📄','.sh':'⚙️','.bat':'⚙️',
+    '.jpg':'🖼️','.jpeg':'🖼️','.png':'🖼️','.gif':'🖼️','.svg':'🖼️',
+    '.pdf':'📕','.zip':'🗜️','.mp4':'🎬','.mp3':'🎵',
+    '.env':'🔑','.toml':'⚙️','.yml':'⚙️','.yaml':'⚙️','.csv':'📊',
+    '.db':'🗄️','.sqlite':'🗄️','.lock':'🔒'};
+  return m[ext.toLowerCase()]||'📄';
+}
+
+let fabOpen = false;
+function toggleFab() {
+  fabOpen = !fabOpen;
+  document.getElementById('files-fab').classList.toggle('open', fabOpen);
+  if (fabOpen) openModal('fab-menu'); else closeModal('fab-menu');
+}
+
+async function newFile() {
+  closeModal('fab-menu'); fabOpen = false;
+  const name = prompt('File name:'); if (!name) return;
+  const content = '';
+  const path = (currentPath + '/' + name).replace('//','/');
+  await fetch(`${API}/files`, {method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path,content,operation:'write'})});
+  pushNotif('File created', name, '📄');
+  browseDir(currentPath);
+}
+
+async function newFolder() {
+  closeModal('fab-menu'); fabOpen = false;
+  const name = prompt('Folder name:'); if (!name) return;
+  const path = (currentPath + '/' + name).replace('//','/');
+  await fetch(`${API}/automate`, {method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task:'create_folder',args:[path]})});
+  pushNotif('Folder created', name, '📁');
+  browseDir(currentPath);
+}
+
+// File context menu
+let _ctxPath = '', _ctxName = '';
+function fileCtxMenu(e, path, name) {
+  e.preventDefault(); _ctxPath = path; _ctxName = name;
+  const m = document.getElementById('file-menu');
+  m.style.top = Math.min(e.clientY, window.innerHeight-180)+'px';
+  m.style.left = Math.min(e.clientX, window.innerWidth-170)+'px';
+  m.classList.add('show');
+  setTimeout(()=>document.addEventListener('click',()=>m.classList.remove('show'),{once:true}),10);
+}
+function fmOpen() { viewFile(_ctxPath, _ctxName); }
+function fmEdit() { document.getElementById('msg-input').value = `Read and summarize: ${_ctxPath}`; switchTab('chat'); sendChat(); }
+function fmCopyPath() { navigator.clipboard?.writeText(_ctxPath); pushNotif('Copied','Path copied to clipboard','📋'); }
+async function fmDelete() {
+  if (!confirm(`Delete ${_ctxName}?`)) return;
+  const r = await fetch(`${API}/files`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:_ctxPath,operation:'delete'})});
+  const d = await r.json();
+  pushNotif('Deleted', _ctxName, '🗑️');
+  browseDir(currentPath);
+}
+
+// ════════════════════════════════════════════════════════════
+// CODE
+// ════════════════════════════════════════════════════════════
+function setLang(el, lang) {
+  codeLang = lang;
+  document.querySelectorAll('.lang-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+}
+
+async function genCode() {
+  const instruction = document.getElementById('code-prompt').value.trim();
+  if (!instruction) return;
+  const execute = document.getElementById('exec-chk').checked;
+  const existing = document.getElementById('code-existing').value.trim();
+  const results = document.getElementById('code-results');
+  results.innerHTML = '<div class="empty-state"><span class="empty-icon">⏳</span>Generating...</div>';
+  document.getElementById('code-gen-btn').disabled = true;
+  try {
+    const r = await fetch(`${API}/code`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({instruction, language:codeLang, execute, code:existing||null})
+    });
+    const d = await r.json();
+    let html = '';
+    if (d.explanation) html += codeBlock('💬 Explanation', d.explanation, 'prose');
+    if (d.code) html += codeBlock(`📝 ${codeLang}`, d.code, '');
+    if (d.output) html += codeBlock('▶ Output', d.output, '');
+    if (!html) html = `<div class="empty-state"><span class="empty-icon">⚠️</span>${d.error||'No result'}</div>`;
+    results.innerHTML = html;
+  } catch(e) {
+    results.innerHTML = `<div class="empty-state"><span class="empty-icon">⚠️</span>${e.message}</div>`;
+  }
+  document.getElementById('code-gen-btn').disabled = false;
+}
+
+function codeBlock(title, content, cls) {
+  const id = 'cb_'+Math.random().toString(36).slice(2,7);
+  return `<div class="code-result-block">
+    <div class="crb-header">
+      <span class="crb-title">${title}</span>
+      <button class="crb-copy" onclick="copyEl('${id}')">Copy</button>
+    </div>
+    <div class="crb-body ${cls}" id="${id}">${esc(content)}</div>
+  </div>`;
+}
+
+function copyEl(id) {
+  const t = document.getElementById(id)?.textContent;
+  if (t) navigator.clipboard?.writeText(t);
+  pushNotif('Copied','Code copied to clipboard','📋');
+}
+
+// ════════════════════════════════════════════════════════════
+// SCHEDULE
+// ════════════════════════════════════════════════════════════
+async function addSchedule() {
+  const name = document.getElementById('sn').value.trim();
+  const cmd = document.getElementById('sc').value.trim();
+  const delay = parseInt(document.getElementById('sd').value)||0;
+  if (!name||!cmd) { alert('Name and command required.'); return; }
+  const r = await fetch(`${API}/schedule`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,command:cmd,delay_seconds:delay})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    document.getElementById('sn').value='';
+    document.getElementById('sc').value='';
+    pushNotif('Task scheduled', name + (delay?` in ${delay}s`:' (now)'), '⏰');
+    loadSchedule();
+  }
+}
+
+async function loadSchedule() {
+  const r = await fetch(`${API}/schedule`);
+  const d = await r.json();
+  const list = document.getElementById('sched-list');
+  if (!d.tasks.length) { list.innerHTML='<div class="empty-state"><span class="empty-icon">⏰</span>No scheduled tasks</div>'; return; }
+  list.innerHTML = d.tasks.slice().reverse().map(t=>`
+    <div class="sched-card">
+      <div class="sc-header">
+        <span class="sc-name">${esc(t.name)}</span>
+        <span class="sc-badge ${t.status}">${t.status}</span>
+      </div>
+      <div class="sc-cmd">${esc(t.command)}</div>
+      ${t.result?`<div class="sc-result">${esc(String(t.result).slice(0,200))}</div>`:''}
+    </div>`).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// PLUGINS
+// ════════════════════════════════════════════════════════════
+let pluginTab = 'marketplace';
+function switchPluginTab(tab, el) {
+  pluginTab = tab;
+  document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('plugin-list').style.display = tab==='marketplace'?'flex':'none';
+  document.getElementById('installed-list').style.display = tab==='installed'?'block':'none';
+  document.getElementById('create-plugin').style.display = tab==='create'?'flex':'none';
+  document.getElementById('plugin-search-wrap').style.display = tab!=='create'?'block':'none';
+  if (tab==='installed') renderInstalled();
+  if (tab==='create') renderCreatePlugin();
+  if (tab==='marketplace') renderPlugins();
+}
+
+function renderPlugins(q='') {
+  const list = document.getElementById('plugin-list');
+  const filtered = q ? PLUGINS.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.desc.toLowerCase().includes(q.toLowerCase())) : PLUGINS;
+  list.innerHTML = filtered.map(p=>`
+    <div class="plugin-card" id="pc_${p.id}">
+      <div class="pc-header">
+        <span class="pc-icon">${p.icon}</span>
+        <div class="pc-info">
+          <div class="pc-name">${esc(p.name)}</div>
+          <div class="pc-author">by ${esc(p.author)}</div>
+        </div>
+      </div>
+      <div class="pc-tags">${p.tags.map(t=>`<span class="pc-tag">${t}</span>`).join('')}</div>
+      <div class="pc-desc">${esc(p.desc)}</div>
+      <div class="pc-footer">
+        <span class="pc-stats">⬇ ${p.downloads} · ⭐ ${p.rating}</span>
+        ${_installedPlugins.has(p.id)
+          ?`<button class="pc-btn uninstall" onclick="uninstallPlugin('${p.id}')">Uninstall</button>`
+          :`<button class="pc-btn install" onclick="installPlugin('${p.id}')">Install</button>`}
+      </div>
+    </div>`).join('');
+}
+
+function filterPlugins(q) {
+  if (pluginTab==='marketplace') renderPlugins(q);
+  else if (pluginTab==='installed') renderInstalled(q);
+}
+
+function installPlugin(id) {
+  _installedPlugins.add(id);
+  const p = PLUGINS.find(x=>x.id===id);
+  pushNotif('Plugin installed', p?.name+' is now active', p?.icon||'🧩');
+  renderPlugins(document.getElementById('plugin-search').value);
+}
+
+function uninstallPlugin(id) {
+  _installedPlugins.delete(id);
+  const p = PLUGINS.find(x=>x.id===id);
+  pushNotif('Plugin removed', p?.name, '🗑️');
+  renderPlugins(document.getElementById('plugin-search').value);
+}
+
+function renderInstalled(q='') {
+  const list = document.getElementById('installed-list');
+  const installed = PLUGINS.filter(p=>_installedPlugins.has(p.id) && (!q||p.name.toLowerCase().includes(q.toLowerCase())));
+  if (!installed.length) { list.innerHTML='<div class="empty-state"><span class="empty-icon">🧩</span>No plugins installed yet</div>'; return; }
+  list.innerHTML = installed.map(p=>`
+    <div class="plugin-card">
+      <div class="pc-header">
+        <span class="pc-icon">${p.icon}</span>
+        <div class="pc-info"><div class="pc-name">${esc(p.name)}</div><div class="pc-author">${esc(p.author)}</div></div>
+        <button class="pc-btn uninstall" onclick="uninstallPlugin('${p.id}')">Remove</button>
+      </div>
+    </div>`).join('');
+}
+
+function renderCreatePlugin() {
+  document.getElementById('create-plugin').innerHTML = `
+    <div style="text-align:center;padding:20px">
+      <div style="font-size:48px;margin-bottom:12px">🔨</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px">Create a Plugin</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Build custom automation tasks and share them with the ByteFlow community.</div>
+    </div>
+    <div class="field"><label>Plugin Name</label><input class="field-in" placeholder="e.g. My Deployment Tool"></div>
+    <div class="field"><label>Description</label><input class="field-in" placeholder="What does it do?"></div>
+    <div class="field"><label>Python Code</label><textarea class="field-in" rows="6" style="height:120px;font-family:monospace;font-size:13px" placeholder="def my_task(arg1, arg2):\n    # your code here\n    return result"></textarea></div>
+    <button class="td-btn" style="padding:13px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:var(--radius);font-size:14px;font-weight:700;cursor:pointer">
+      🚀 Submit Plugin
+    </button>
+    <div style="font-size:12px;color:var(--muted);text-align:center">Plugin creation coming soon — will be available in v3.0</div>
+  `;
+  document.getElementById('create-plugin').style.display = 'flex';
+}
+
+// ════════════════════════════════════════════════════════════
+// DEVICES
+// ════════════════════════════════════════════════════════════
+async function initDevices() {
+  const url = window.location.href;
+  document.getElementById('core-url-display').textContent = url;
+  document.getElementById('this-dev-type').textContent = detectDevice();
+  generateQR(url);
+  await loadDevices();
+}
+
+function detectDevice() {
+  const ua = navigator.userAgent;
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/Android/.test(ua)) return /Mobile/.test(ua)?'Android Phone':'Android Tablet';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Browser';
+}
+
+function generateQR(url) {
+  // Simple QR representation - in production use a QR library
+  document.getElementById('qr-img').textContent = '📷';
+  document.getElementById('qr-url-text').textContent = url;
+  // If qrcode.js is available
+  try {
+    const el = document.getElementById('qr-img');
+    el.innerHTML = '';
+    el.style.fontSize = '0';
+    new QRCode(el, {text:url, width:160, height:160, colorDark:'#e8e8f0', colorLight:'#111118'});
+  } catch(e) {
+    document.getElementById('qr-img').textContent = '📷';
+  }
+}
+
+async function loadDevices() {
+  // Show current connection info + simulate connected devices
+  const list = document.getElementById('device-list');
+  const devices = [
+    {name:'Laptop (Host)', icon:'💻', detail:'Running ByteFlow Core · localhost:7861', online:true},
+  ];
+  list.innerHTML = devices.map(d=>`
+    <div class="dev-card">
+      <span class="dev-icon">${d.icon}</span>
+      <div class="dev-info">
+        <div class="dev-name">${esc(d.name)}</div>
+        <div class="dev-detail">${esc(d.detail)}</div>
+      </div>
+      <div class="dev-status ${d.online?'online':'offline'}"></div>
+    </div>`).join('');
+}
+
+function copyUrl() {
+  navigator.clipboard?.writeText(window.location.href);
+  pushNotif('Copied', 'URL copied — share with another device', '📋');
+}
+
+function openStatus() { openStatusModal(); }
+
+// ════════════════════════════════════════════════════════════
+// NOTIFICATIONS
+// ════════════════════════════════════════════════════════════
+function pushNotif(title, body, icon='🔔') {
+  _notifications.unshift({title,body,icon,time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})});
+  const badge = document.getElementById('notif-badge');
+  badge.classList.add('show');
+  badge.textContent = Math.min(_notifications.length,9);
+}
+
+function openNotifDrawer() {
+  const el = document.getElementById('notif-items');
+  if (!_notifications.length) {
+    el.innerHTML = '<div class="empty-state"><span class="empty-icon">🔔</span>No notifications</div>';
+  } else {
+    el.innerHTML = _notifications.map(n=>`
+      <div class="notif-item">
+        <span class="notif-icon">${n.icon}</span>
+        <div class="notif-text">
+          <div class="notif-title">${esc(n.title)}</div>
+          <div class="notif-body">${esc(n.body)}</div>
+          <div class="notif-time">${n.time}</div>
+        </div>
+      </div>`).join('');
+  }
+  openModal('notif-drawer');
+}
+
+function clearNotifs() {
+  _notifications = [];
+  document.getElementById('notif-badge').classList.remove('show');
+  closeModal('notif-drawer');
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL HELPERS
+// ════════════════════════════════════════════════════════════
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+// ════════════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function copyText(btn, text) {
+  navigator.clipboard?.writeText(text);
+  btn.textContent = 'Copied!';
+  setTimeout(()=>btn.textContent='Copy', 1500);
+}
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+checkStatus();
+setInterval(checkStatus, 20000);
+setInterval(()=>{
+  if (document.getElementById('schedule-panel').classList.contains('active')) loadSchedule();
+}, 4000);
+document.getElementById('msg-input').focus();
 </script>
 </body>
 </html>

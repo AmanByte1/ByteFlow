@@ -270,3 +270,145 @@ def start_server(host="0.0.0.0", port=7860, core_url="http://localhost:7861",
         import webbrowser; webbrowser.open(f"http://localhost:{port}")
 
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PROXY ROUTES — Phase 3 & 4 features
+# All these forward to the core API
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Voice
+@app.post("/voice")
+async def voice(request: Request):
+    body = await request.json()
+    return await _post("/voice", body)
+
+# Files
+@app.post("/files")
+async def files(request: Request):
+    body = await request.json()
+    return await _post("/files", body)
+
+@app.get("/files/browse")
+async def files_browse(path: str = "~"):
+    return await _get(f"/files/browse?path={path}")
+
+# Code assistant
+@app.post("/code")
+async def code(request: Request):
+    body = await request.json()
+    return await _post("/code", body)
+
+# Scheduler
+@app.post("/schedule")
+async def schedule(request: Request):
+    body = await request.json()
+    return await _post("/schedule", body)
+
+@app.get("/schedule")
+async def schedule_list():
+    return await _get("/schedule")
+
+@app.get("/schedule/{task_id}")
+async def schedule_get(task_id: str):
+    return await _get(f"/schedule/{task_id}")
+
+@app.delete("/schedule/{task_id}")
+async def schedule_delete(task_id: str):
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/schedule/{task_id}")
+        return r.json()
+
+# Plugin marketplace
+@app.get("/plugins")
+async def plugins(q: str = "", tag: str = ""):
+    return await _get(f"/plugins?q={q}&tag={tag}")
+
+@app.get("/plugins/installed")
+async def plugins_installed():
+    return await _get("/plugins/installed")
+
+@app.post("/plugins/install")
+async def plugin_install(request: Request):
+    body = await request.json()
+    return await _post("/plugins/install", body)
+
+@app.post("/plugins/uninstall")
+async def plugin_uninstall(request: Request):
+    body = await request.json()
+    return await _post("/plugins/uninstall", body)
+
+@app.post("/plugins/toggle")
+async def plugin_toggle(request: Request):
+    body = await request.json()
+    return await _post("/plugins/toggle", body)
+
+@app.post("/plugins/create")
+async def plugin_create(request: Request):
+    body = await request.json()
+    return await _post("/plugins/create", body)
+
+# Devices
+@app.get("/devices")
+async def devices():
+    return await _get("/devices")
+
+@app.post("/devices/register")
+async def device_register(request: Request):
+    body = await request.json()
+    return await _post("/devices/register", body)
+
+@app.post("/devices/heartbeat")
+async def device_heartbeat(request: Request):
+    body = await request.json()
+    return await _post("/devices/heartbeat", body)
+
+@app.get("/devices/url")
+async def device_url():
+    return await _get("/devices/url")
+
+@app.get("/devices/count")
+async def device_count():
+    return await _get("/devices/count")
+
+# Memory
+@app.get("/memory")
+async def memory_get():
+    return await _get("/memory")
+
+@app.post("/memory")
+async def memory_post(request: Request):
+    body = await request.json()
+    return await _post("/memory", body)
+
+@app.delete("/memory")
+async def memory_delete():
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/memory")
+        return r.json()
+
+# Models
+@app.get("/models")
+async def models_list():
+    return await _get("/models")
+
+
+async def _get(path: str):
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"{CORE_URL}{path}")
+            return r.json()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, 503)
+
+
+async def _post(path: str, body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.post(f"{CORE_URL}{path}", json=body)
+            return r.json()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, 503)
+
+
+from fastapi import Request
