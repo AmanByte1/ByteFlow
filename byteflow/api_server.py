@@ -188,6 +188,17 @@ async def chat(req: ChatRequest):
         agent = get_agent()
         loop = asyncio.get_event_loop()
 
+        # Auto-inject KB context if KB has indexed content
+        msg = req.message
+        try:
+            kb = get_kb()
+            if kb._chunks:
+                context = kb.get_context(req.message, top_k=2)
+                if context:
+                    msg = f"{context}\n\nUser: {req.message}"
+        except Exception:
+            msg = req.message
+
         async def _run_with_timeout(fn, *args):
             return await asyncio.wait_for(
                 loop.run_in_executor(None, fn, *args),
@@ -195,13 +206,13 @@ async def chat(req: ChatRequest):
             )
 
         if req.mode == "chat":
-            response = await _run_with_timeout(agent.chat, req.message)
+            response = await _run_with_timeout(agent.chat, msg)
 
         elif req.mode == "search":
             try:
-                response = await _run_with_timeout(agent.chat_with_search, req.message)
+                response = await _run_with_timeout(agent.chat_with_search, msg)
             except AttributeError:
-                response = await _run_with_timeout(agent.chat, req.message)
+                response = await _run_with_timeout(agent.chat, msg)
 
         elif req.mode == "code":
             result = await _run_with_timeout(
@@ -220,7 +231,7 @@ async def chat(req: ChatRequest):
                 response += f"\n\n**Output:**\n```\n{output}\n```"
 
         else:  # run
-            raw = await _run_with_timeout(agent.run, req.message)
+            raw = await _run_with_timeout(agent.run, msg)
             response = str(raw) if not isinstance(raw, str) else raw
 
         # Save to persistent chat history

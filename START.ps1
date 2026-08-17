@@ -114,3 +114,6 @@ try {
     Stop-Process -Id $core.Id -Force -ErrorAction SilentlyContinue
     Write-Host "  Stopped. Goodbye!" -ForegroundColor Gray
 }
+
+# To launch the full desktop companion instead of the web UI, run:
+# python -m byteflow.companion_core --model llama3
