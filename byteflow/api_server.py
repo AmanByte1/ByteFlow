@@ -223,7 +223,16 @@ async def chat(req: ChatRequest):
             raw = await _run_with_timeout(agent.run, req.message)
             response = str(raw) if not isinstance(raw, str) else raw
 
-        return {"response": response, "mode": req.mode, "ok": True}
+        # Save to persistent chat history
+        try:
+            h = get_history()
+            h.add_message("user", req.message, req.mode)
+            h.add_message("assistant", response, req.mode)
+        except Exception:
+            pass
+
+        return {"response": response, "mode": req.mode, "ok": True,
+                "session_id": get_history().active.session_id}
 
     except asyncio.TimeoutError:
         _error_count += 1
@@ -636,7 +645,6 @@ def start(port: int = 7861, model: str = "llama2"):
     try:
         import ollama
         available = [m.model for m in ollama.list().models]
-        # Match partial names (llama3 matches llama3:latest)
         matched = next((m for m in available if model in m or m.startswith(model)), None)
         if not matched:
             print(f"\n  ⚠️  Model '{model}' not found in Ollama!")
@@ -648,7 +656,27 @@ def start(port: int = 7861, model: str = "llama2"):
         else:
             _model = matched.split(":")[0] if ":" in matched else matched
     except Exception:
-        pass  # Ollama not running yet, will fail on first request with friendly message
+        pass
+
+    # Auto-start background services
+    try:
+        from byteflow.watcher import get_watcher
+        get_watcher()  # starts background thread
+    except Exception:
+        pass
+
+    try:
+        from byteflow.workflows import get_workflow_engine
+        get_workflow_engine()  # starts background thread
+    except Exception:
+        pass
+
+    # Load marketplace plugins
+    try:
+        from byteflow.marketplace import get_marketplace
+        get_marketplace().load_all_enabled()
+    except Exception:
+        pass
 
     print(f"\n{'='*48}")
     print(f"  ByteFlow Core API  v2.0")
@@ -783,3 +811,458 @@ async def device_count():
     dm = get_device_manager()
     dm.prune()
     return dm.count()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 1 — SETTINGS, CHAT HISTORY, PERSISTENT MEMORY
+# ══════════════════════════════════════════════════════════════════════════════
+
+from byteflow.settings import get_settings
+from byteflow.chat_history import get_history
+
+# ── Settings routes ───────────────────────────────────────────────────────────
+
+class SettingsUpdateRequest(BaseModel):
+    changes: dict
+
+class SettingResetRequest(BaseModel):
+    key: Optional[str] = None
+
+class ShortcutCreateRequest(BaseModel):
+    name: str
+    icon: str = "⚡"
+    steps: list[str]
+
+class ShortcutDeleteRequest(BaseModel):
+    shortcut_id: str
+
+@app.get("/settings")
+async def settings_get():
+    s = get_settings()
+    return {"ok": True, "settings": s.all(), "defaults": s.defaults()}
+
+@app.post("/settings")
+async def settings_update(req: SettingsUpdateRequest):
+    s = get_settings()
+    result = s.update(req.changes)
+    # If model changed, reset agent so it picks up new model
+    if "model" in req.changes and result["ok"]:
+        global _agent, _model
+        _model = req.changes["model"]
+        _agent = None
+    return result
+
+@app.post("/settings/reset")
+async def settings_reset(req: SettingResetRequest):
+    s = get_settings()
+    return s.reset(req.key)
+
+@app.get("/settings/shortcuts")
+async def shortcuts_get():
+    s = get_settings()
+    return {"ok": True, "shortcuts": s.get_shortcuts()}
+
+@app.post("/settings/shortcuts")
+async def shortcut_create(req: ShortcutCreateRequest):
+    s = get_settings()
+    return s.add_shortcut(req.name, req.icon, req.steps)
+
+@app.delete("/settings/shortcuts/{shortcut_id}")
+async def shortcut_delete(shortcut_id: str):
+    s = get_settings()
+    return s.delete_shortcut(shortcut_id)
+
+@app.post("/settings/shortcuts/{shortcut_id}/run")
+async def shortcut_run(shortcut_id: str):
+    """Execute all steps of a shortcut sequentially."""
+    s = get_settings()
+    shortcuts = s.get_shortcuts()
+    sc = next((x for x in shortcuts if x["id"] == shortcut_id), None)
+    if not sc:
+        return JSONResponse({"ok": False, "error": f"Shortcut '{shortcut_id}' not found"}, 404)
+
+    agent = get_agent()
+    loop = asyncio.get_event_loop()
+    results = []
+    for step in sc.get("steps", []):
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, agent.run, step),
+                timeout=60
+            )
+            results.append({"step": step, "result": str(result), "ok": True})
+        except Exception as e:
+            results.append({"step": step, "result": str(e), "ok": False})
+
+    return {"ok": True, "shortcut": sc["name"], "results": results}
+
+
+# ── Chat history routes ───────────────────────────────────────────────────────
+
+class SessionRenameRequest(BaseModel):
+    title: str
+
+class HistorySearchRequest(BaseModel):
+    query: str
+    limit: int = 20
+
+@app.get("/history")
+async def history_sessions(limit: int = 50):
+    h = get_history()
+    return {
+        "ok": True,
+        "sessions": h.all_sessions(limit),
+        "stats": h.stats(),
+        "active_session": h.active.session_id,
+    }
+
+@app.get("/history/active")
+async def history_active(n: int = 100):
+    h = get_history()
+    return {
+        "ok": True,
+        "session": h.active.to_dict(include_messages=False),
+        "messages": h.get_messages(n=n),
+    }
+
+@app.get("/history/{session_id}")
+async def history_get_session(session_id: str):
+    h = get_history()
+    s = h.get_session(session_id)
+    if not s:
+        return JSONResponse({"ok": False, "error": "Session not found"}, 404)
+    return {"ok": True, "session": s}
+
+@app.post("/history/new")
+async def history_new_session():
+    h = get_history()
+    s = h.new_session()
+    return {"ok": True, "session": s.to_dict(include_messages=False)}
+
+@app.post("/history/{session_id}/switch")
+async def history_switch(session_id: str):
+    h = get_history()
+    return h.switch_session(session_id)
+
+@app.post("/history/{session_id}/rename")
+async def history_rename(session_id: str, req: SessionRenameRequest):
+    h = get_history()
+    return h.rename_session(session_id, req.title)
+
+@app.post("/history/{session_id}/pin")
+async def history_pin(session_id: str):
+    h = get_history()
+    s = h._sessions.get(session_id)
+    pinned = not (s.pinned if s else False)
+    return h.pin_session(session_id, pinned)
+
+@app.delete("/history/{session_id}")
+async def history_delete_session(session_id: str):
+    h = get_history()
+    return h.delete_session(session_id)
+
+@app.delete("/history")
+async def history_clear_all():
+    h = get_history()
+    return h.clear_all()
+
+@app.post("/history/search")
+async def history_search(req: HistorySearchRequest):
+    h = get_history()
+    results = h.search(req.query, req.limit)
+    return {"ok": True, "results": results, "count": len(results)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — WATCHER, TERMINAL, WAKE WORD
+# ══════════════════════════════════════════════════════════════════════════════
+
+from byteflow.watcher import get_watcher
+
+class WatchRuleRequest(BaseModel):
+    rule_id: str
+    name: str
+    kind: str   # disk | git | process | file | custom
+    config: dict = {}
+    interval: int = 60
+
+class AlertReadRequest(BaseModel):
+    alert_id: Optional[str] = None  # None = mark all read
+
+class TerminalRequest(BaseModel):
+    command: str
+    cwd: str = "~"
+    timeout: int = 30
+
+# ── Watcher routes ─────────────────────────────────────────────────────────────
+
+@app.get("/watch/alerts")
+async def watch_alerts(unread_only: bool = False, limit: int = 50):
+    w = get_watcher()
+    return {
+        "ok": True,
+        "alerts": w.get_alerts(unread_only, limit),
+        "unread": w.unread_count(),
+    }
+
+@app.post("/watch/alerts/read")
+async def watch_mark_read(req: AlertReadRequest):
+    w = get_watcher()
+    w.mark_read(req.alert_id)
+    return {"ok": True}
+
+@app.delete("/watch/alerts")
+async def watch_clear_alerts():
+    w = get_watcher()
+    w.clear_alerts()
+    return {"ok": True}
+
+@app.get("/watch/rules")
+async def watch_rules():
+    w = get_watcher()
+    return {"ok": True, "rules": w.get_rules()}
+
+@app.post("/watch/rules")
+async def watch_add_rule(req: WatchRuleRequest):
+    w = get_watcher()
+    rule = w.add_rule(req.rule_id, req.name, req.kind, req.config, req.interval)
+    return {"ok": True, "rule": req.rule_id}
+
+@app.delete("/watch/rules/{rule_id}")
+async def watch_remove_rule(rule_id: str):
+    w = get_watcher()
+    ok = w.remove_rule(rule_id)
+    return {"ok": ok}
+
+@app.post("/watch/rules/{rule_id}/toggle")
+async def watch_toggle_rule(rule_id: str):
+    w = get_watcher()
+    return w.toggle_rule(rule_id)
+
+@app.post("/watch/rules/{rule_id}/trigger")
+async def watch_trigger_rule(rule_id: str):
+    w = get_watcher()
+    return w.trigger_now(rule_id)
+
+# ── Terminal routes ────────────────────────────────────────────────────────────
+
+@app.post("/terminal")
+async def terminal_run(req: TerminalRequest):
+    """Run a shell command and stream back output."""
+    global _request_count
+    _request_count += 1
+    import subprocess
+    cwd = os.path.expanduser(req.cwd)
+    if not os.path.isdir(cwd):
+        cwd = os.path.expanduser("~")
+    try:
+        result = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    req.command, shell=True, cwd=cwd,
+                    capture_output=True, text=True,
+                    timeout=req.timeout, encoding="utf-8", errors="replace"
+                )
+            ),
+            timeout=req.timeout + 5
+        )
+        return {
+            "ok": True,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+            "cwd": cwd,
+            "command": req.command,
+        }
+    except asyncio.TimeoutError:
+        return JSONResponse({"ok": False, "error": f"Command timed out after {req.timeout}s"}, 408)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, 500)
+
+@app.get("/terminal/cwd")
+async def terminal_cwd():
+    """Get home directory as starting cwd."""
+    return {"cwd": os.path.expanduser("~"), "ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 3 — INTEGRATIONS, KNOWLEDGE BASE, WORKFLOWS
+# ══════════════════════════════════════════════════════════════════════════════
+
+from byteflow.integrations import get_integrations
+from byteflow.knowledge_base import get_kb
+from byteflow.workflows import get_workflow_engine
+
+# ── Integration routes ────────────────────────────────────────────────────────
+
+class EmailSendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    html: bool = False
+
+class TelegramSendRequest(BaseModel):
+    text: str
+    chat_id: Optional[str] = None
+
+class SlackSendRequest(BaseModel):
+    text: str
+    channel: Optional[str] = None
+
+class WhatsAppSendRequest(BaseModel):
+    to: str
+    message: str
+
+@app.get("/integrations")
+async def integrations_status():
+    ig = get_integrations()
+    return {"ok": True, "integrations": ig.status()}
+
+@app.post("/integrations/email/send")
+async def email_send(req: EmailSendRequest):
+    ig = get_integrations()
+    return ig.email.send(req.to, req.subject, req.body, req.html)
+
+@app.get("/integrations/email/inbox")
+async def email_inbox(n: int = 10):
+    ig = get_integrations()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: ig.email.read_inbox(n))
+
+@app.post("/integrations/telegram/send")
+async def telegram_send(req: TelegramSendRequest):
+    ig = get_integrations()
+    return ig.telegram.send(req.text, req.chat_id)
+
+@app.get("/integrations/telegram/updates")
+async def telegram_updates(limit: int = 10):
+    ig = get_integrations()
+    return ig.telegram.get_updates(limit)
+
+@app.post("/integrations/slack/send")
+async def slack_send(req: SlackSendRequest):
+    ig = get_integrations()
+    return ig.slack.send(req.text, req.channel)
+
+@app.post("/integrations/whatsapp/send")
+async def whatsapp_send(req: WhatsAppSendRequest):
+    ig = get_integrations()
+    return ig.whatsapp.send(req.to, req.message)
+
+# ── Knowledge base routes ─────────────────────────────────────────────────────
+
+class KBAddRequest(BaseModel):
+    path: str
+    recursive: bool = True
+
+class KBSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+class KBRemoveRequest(BaseModel):
+    source_id: str
+
+class KBChatRequest(BaseModel):
+    question: str
+    top_k: int = 3
+
+@app.get("/kb")
+async def kb_status():
+    kb = get_kb()
+    return {"ok": True, "stats": kb.stats(), "sources": kb.sources()}
+
+@app.post("/kb/add")
+async def kb_add(req: KBAddRequest):
+    kb = get_kb()
+    loop = asyncio.get_event_loop()
+    path = os.path.expanduser(req.path)
+    if os.path.isdir(path):
+        result = await loop.run_in_executor(None, lambda: kb.add_folder(path, req.recursive))
+    else:
+        result = await loop.run_in_executor(None, lambda: kb.add_file(path))
+    return result
+
+@app.post("/kb/search")
+async def kb_search(req: KBSearchRequest):
+    kb = get_kb()
+    results = kb.search(req.query, req.top_k)
+    return {"ok": True, "results": results, "count": len(results)}
+
+@app.post("/kb/ask")
+async def kb_ask(req: KBChatRequest):
+    """Ask a question — answer grounded in KB context."""
+    kb = get_kb()
+    context = kb.get_context(req.question, req.top_k)
+    agent = get_agent()
+    loop = asyncio.get_event_loop()
+    if context:
+        prompt = f"{context}\n\nQuestion: {req.question}\n\nAnswer based on the context above:"
+    else:
+        prompt = req.question
+    try:
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, agent.chat, prompt),
+            timeout=90
+        )
+        return {"ok": True, "answer": response, "sources_used": len(kb.search(req.question, req.top_k))}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": friendly_error(e)}, 500)
+
+@app.delete("/kb/source")
+async def kb_remove(req: KBRemoveRequest):
+    kb = get_kb()
+    return kb.remove_source(req.source_id)
+
+@app.delete("/kb")
+async def kb_clear():
+    kb = get_kb()
+    return kb.clear()
+
+# ── Workflow routes ───────────────────────────────────────────────────────────
+
+class WorkflowCreateRequest(BaseModel):
+    workflow_id: str
+    name: str
+    description: str = ""
+    trigger: dict
+    actions: list[dict]
+    check_interval: int = 30
+
+class WorkflowIdRequest(BaseModel):
+    workflow_id: str
+
+@app.get("/workflows")
+async def workflows_list():
+    eng = get_workflow_engine()
+    return {"ok": True, "workflows": eng.all(), "stats": eng.stats()}
+
+@app.post("/workflows")
+async def workflow_create(req: WorkflowCreateRequest):
+    eng = get_workflow_engine()
+    return eng.add(req.workflow_id, req.name, req.trigger,
+                   req.actions, req.description, req.check_interval)
+
+@app.get("/workflows/{wid}")
+async def workflow_get(wid: str):
+    eng = get_workflow_engine()
+    wf = eng.get(wid)
+    if not wf:
+        return JSONResponse({"ok": False, "error": "Not found"}, 404)
+    return {"ok": True, "workflow": wf}
+
+@app.delete("/workflows/{wid}")
+async def workflow_delete(wid: str):
+    eng = get_workflow_engine()
+    return eng.remove(wid)
+
+@app.post("/workflows/{wid}/toggle")
+async def workflow_toggle(wid: str):
+    eng = get_workflow_engine()
+    return eng.toggle(wid)
+
+@app.post("/workflows/{wid}/run")
+async def workflow_run(wid: str):
+    eng = get_workflow_engine()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: eng.trigger_now(wid))

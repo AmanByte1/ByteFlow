@@ -412,3 +412,180 @@ async def _post(path: str, body: dict):
 
 
 from fastapi import Request
+
+# Phase 1 proxy routes
+@app.get("/settings")
+async def settings_get(): return await _get("/settings")
+
+@app.post("/settings")
+async def settings_post(request: Request):
+    return await _post("/settings", await request.json())
+
+@app.post("/settings/reset")
+async def settings_reset(request: Request):
+    return await _post("/settings/reset", await request.json())
+
+@app.get("/settings/shortcuts")
+async def shortcuts_get(): return await _get("/settings/shortcuts")
+
+@app.post("/settings/shortcuts")
+async def shortcuts_post(request: Request):
+    return await _post("/settings/shortcuts", await request.json())
+
+@app.delete("/settings/shortcuts/{sid}")
+async def shortcut_del(sid: str):
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/settings/shortcuts/{sid}")
+        return r.json()
+
+@app.post("/settings/shortcuts/{sid}/run")
+async def shortcut_run(sid: str):
+    return await _post(f"/settings/shortcuts/{sid}/run", {})
+
+@app.get("/history")
+async def history_list(): return await _get("/history")
+
+@app.get("/history/active")
+async def history_active(): return await _get("/history/active")
+
+@app.post("/history/new")
+async def history_new(): return await _post("/history/new", {})
+
+@app.post("/history/search")
+async def history_search(request: Request):
+    return await _post("/history/search", await request.json())
+
+@app.get("/history/{sid}")
+async def history_get(sid: str): return await _get(f"/history/{sid}")
+
+@app.post("/history/{sid}/switch")
+async def history_switch(sid: str): return await _post(f"/history/{sid}/switch", {})
+
+@app.post("/history/{sid}/rename")
+async def history_rename(sid: str, request: Request):
+    return await _post(f"/history/{sid}/rename", await request.json())
+
+@app.post("/history/{sid}/pin")
+async def history_pin(sid: str): return await _post(f"/history/{sid}/pin", {})
+
+@app.delete("/history/{sid}")
+async def history_del(sid: str):
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/history/{sid}")
+        return r.json()
+
+@app.delete("/history")
+async def history_clear():
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/history")
+        return r.json()
+
+# Phase 2 proxy routes
+@app.get("/watch/alerts")
+async def p2_watch_alerts(unread_only: bool = False, limit: int = 50):
+    return await _get(f"/watch/alerts?unread_only={unread_only}&limit={limit}")
+
+@app.post("/watch/alerts/read")
+async def p2_watch_read(request: Request):
+    return await _post("/watch/alerts/read", await request.json())
+
+@app.delete("/watch/alerts")
+async def p2_watch_clear():
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/watch/alerts")
+        return r.json()
+
+@app.get("/watch/rules")
+async def p2_watch_rules(): return await _get("/watch/rules")
+
+@app.post("/watch/rules")
+async def p2_watch_add(request: Request):
+    return await _post("/watch/rules", await request.json())
+
+@app.delete("/watch/rules/{rule_id}")
+async def p2_watch_del(rule_id: str):
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/watch/rules/{rule_id}")
+        return r.json()
+
+@app.post("/watch/rules/{rule_id}/toggle")
+async def p2_watch_toggle(rule_id: str):
+    return await _post(f"/watch/rules/{rule_id}/toggle", {})
+
+@app.post("/watch/rules/{rule_id}/trigger")
+async def p2_watch_trigger(rule_id: str):
+    return await _post(f"/watch/rules/{rule_id}/trigger", {})
+
+@app.post("/terminal")
+async def p2_terminal(request: Request):
+    return await _post("/terminal", await request.json())
+
+@app.get("/terminal/cwd")
+async def p2_terminal_cwd(): return await _get("/terminal/cwd")
+
+# Phase 3 proxy routes - Integrations, KB, Workflows
+@app.get("/integrations")
+async def p3_ig(): return await _get("/integrations")
+
+@app.post("/integrations/email/send")
+async def p3_email(request: Request): return await _post("/integrations/email/send", await request.json())
+
+@app.get("/integrations/email/inbox")
+async def p3_inbox(n: int = 10): return await _get(f"/integrations/email/inbox?n={n}")
+
+@app.post("/integrations/telegram/send")
+async def p3_tg(request: Request): return await _post("/integrations/telegram/send", await request.json())
+
+@app.get("/integrations/telegram/updates")
+async def p3_tg_upd(limit: int = 10): return await _get(f"/integrations/telegram/updates?limit={limit}")
+
+@app.post("/integrations/slack/send")
+async def p3_slack(request: Request): return await _post("/integrations/slack/send", await request.json())
+
+@app.post("/integrations/whatsapp/send")
+async def p3_wa(request: Request): return await _post("/integrations/whatsapp/send", await request.json())
+
+@app.get("/kb")
+async def p3_kb(): return await _get("/kb")
+
+@app.post("/kb/add")
+async def p3_kb_add(request: Request): return await _post("/kb/add", await request.json())
+
+@app.post("/kb/search")
+async def p3_kb_search(request: Request): return await _post("/kb/search", await request.json())
+
+@app.post("/kb/ask")
+async def p3_kb_ask(request: Request): return await _post("/kb/ask", await request.json())
+
+@app.delete("/kb/source")
+async def p3_kb_rm(request: Request):
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/kb/source", json=await request.json())
+        return r.json()
+
+@app.delete("/kb")
+async def p3_kb_clear():
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/kb")
+        return r.json()
+
+@app.get("/workflows")
+async def p3_wf(): return await _get("/workflows")
+
+@app.post("/workflows")
+async def p3_wf_create(request: Request): return await _post("/workflows", await request.json())
+
+@app.get("/workflows/{wid}")
+async def p3_wf_get(wid: str): return await _get(f"/workflows/{wid}")
+
+@app.delete("/workflows/{wid}")
+async def p3_wf_del(wid: str):
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{CORE_URL}/workflows/{wid}")
+        return r.json()
+
+@app.post("/workflows/{wid}/toggle")
+async def p3_wf_toggle(wid: str): return await _post(f"/workflows/{wid}/toggle", {})
+
+@app.post("/workflows/{wid}/run")
+async def p3_wf_run(wid: str): return await _post(f"/workflows/{wid}/run", {})

@@ -550,6 +550,44 @@ button,input,textarea,select{font-family:var(--font)}
 
 .empty-state{padding:40px 20px;text-align:center;color:var(--muted);font-size:14px}
 .empty-icon{font-size:48px;margin-bottom:12px;display:block}
+
+/* Settings rows */
+.srow{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);font-size:14px}
+.srow:last-child{border-bottom:none}
+
+/* Toggle switch */
+.toggle{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.tslider{position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:24px;transition:.3s}
+.tslider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.toggle input:checked + .tslider{background:var(--accent)}
+.toggle input:checked + .tslider:before{transform:translateX(20px)}
+
+/* Theme buttons */
+.theme-btn{padding:5px 14px;border-radius:20px;border:1px solid var(--border);background:var(--bg2);color:var(--muted);font-size:12px;cursor:pointer;transition:all .2s}
+.theme-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* History cards */
+.hist-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;cursor:pointer;transition:all .2s;position:relative}
+.hist-card:hover{border-color:rgba(79,140,255,.3)}
+.hist-card.active-sess{border-color:var(--accent);background:rgba(79,140,255,.08)}
+.hist-title{font-size:14px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:50px}
+.hist-meta{font-size:11px;color:var(--muted)}
+.hist-actions{position:absolute;top:10px;right:10px;display:flex;gap:4px;opacity:0;transition:opacity .2s}
+.hist-card:hover .hist-actions{opacity:1}
+.hist-act-btn{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:3px 7px;font-size:11px;color:var(--muted);cursor:pointer}
+.hist-act-btn:hover{color:var(--accent)}
+.hist-act-btn.del:hover{color:var(--red)}
+
+/* Shortcut cards */
+.sc-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;display:flex;align-items:center;gap:10px}
+.sc-icon{font-size:22px;flex-shrink:0}
+.sc-info{flex:1;min-width:0}
+.sc-name{font-size:14px;font-weight:600}
+.sc-steps{font-size:11px;color:var(--muted);margin-top:2px}
+.sc-run{background:var(--accent);border:none;border-radius:8px;padding:6px 14px;color:#fff;font-size:12px;font-weight:600;cursor:pointer}
+.sc-del-btn{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px}
+.sc-del-btn:hover{color:var(--red)}
 </style>
 </head>
 <body>
@@ -578,9 +616,16 @@ button,input,textarea,select{font-family:var(--font)}
   <div class="nav-tab" onclick="switchTab('voice')"><span class="ti">🎙️</span>Voice</div>
   <div class="nav-tab" onclick="switchTab('files')"><span class="ti">📁</span>Files</div>
   <div class="nav-tab" onclick="switchTab('code')"><span class="ti">🧑‍💻</span>Code</div>
+  <div class="nav-tab" onclick="switchTab('terminal')"><span class="ti">⌨️</span>Terminal</div>
   <div class="nav-tab" onclick="switchTab('schedule')"><span class="ti">⏰</span>Tasks</div>
+  <div class="nav-tab" onclick="switchTab('watch')"><span class="ti">👁️</span>Watch</div>
+  <div class="nav-tab" onclick="switchTab('workflows')"><span class="ti">⚡</span>Flows</div>
+  <div class="nav-tab" onclick="switchTab('kb')"><span class="ti">📚</span>KB</div>
+  <div class="nav-tab" onclick="switchTab('integrations')"><span class="ti">🔗</span>Connect</div>
   <div class="nav-tab" onclick="switchTab('plugins')"><span class="ti">🧩</span>Plugins</div>
   <div class="nav-tab" onclick="switchTab('devices')"><span class="ti">📡</span>Devices</div>
+  <div class="nav-tab" onclick="switchTab('history')"><span class="ti">🕐</span>History</div>
+  <div class="nav-tab" onclick="switchTab('settings')"><span class="ti">⚙️</span>Settings</div>
 </div>
 
 <!-- ════════════════════ CHAT PANEL ════════════════════ -->
@@ -629,6 +674,13 @@ button,input,textarea,select{font-family:var(--font)}
       <div class="voice-card-text" id="v-response">—</div>
     </div>
     <button id="voice-repeat-btn" onclick="repeatSpeak()">🔊 Repeat</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:0 4px">
+      <div>
+        <div style="font-size:13px;font-weight:600">Wake Word</div>
+        <div style="font-size:11px;color:var(--muted)" id="wake-status">Wake word off</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="wake-toggle" onchange="toggleWakeWord()"><span class="tslider"></span></label>
+    </div>
   </div>
 </div>
 
@@ -733,6 +785,342 @@ button,input,textarea,select{font-family:var(--font)}
       <div id="qr-img">📷</div>
       <div class="qr-hint" id="qr-url-text">Generating QR code...</div>
     </div>
+  </div>
+</div>
+
+<!-- ════════════════════ TERMINAL PANEL ════════════════════ -->
+<div class="panel" id="terminal-panel" style="flex-direction:column;background:#0d0d0d">
+  <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #1a1a1a;flex-shrink:0;background:#111">
+    <span style="font-size:12px;color:#666;font-family:monospace" id="term-cwd">~</span>
+    <div style="flex:1"></div>
+    <button onclick="termClear()" style="background:none;border:none;color:#444;cursor:pointer;font-size:12px">Clear</button>
+    <button onclick="termCopy()" style="background:none;border:none;color:#444;cursor:pointer;font-size:12px">Copy</button>
+  </div>
+  <div id="term-output" style="flex:1;overflow-y:auto;padding:10px 14px;font-family:'Courier New',monospace;font-size:13px;line-height:1.6;color:#00e5a0"></div>
+  <div style="display:flex;align-items:center;gap:0;border-top:1px solid #1a1a1a;flex-shrink:0;background:#111;padding:6px 12px">
+    <span style="color:#4f8cff;font-family:monospace;font-size:13px;flex-shrink:0">❯&nbsp;</span>
+    <input id="term-input" style="flex:1;background:transparent;border:none;color:#e8e8f0;font-family:'Courier New',monospace;font-size:13px;outline:none;caret-color:#4f8cff" placeholder="enter command..." onkeydown="termKey(event)" autocomplete="off" autocorrect="off" spellcheck="false">
+  </div>
+</div>
+
+<!-- ════════════════════ WATCHER PANEL ════════════════════ -->
+<div class="panel" id="watch-panel" style="flex-direction:column">
+  <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div class="ptab active" id="w-tab-alerts" onclick="switchWatchTab('alerts',this)">🔔 Alerts</div>
+    <div class="ptab" id="w-tab-rules" onclick="switchWatchTab('rules',this)">⚙️ Rules</div>
+  </div>
+
+  <!-- Alerts sub-panel -->
+  <div id="w-alerts" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <span style="font-size:12px;color:var(--muted)" id="w-unread-label">Loading...</span>
+      <div style="flex:1"></div>
+      <button class="tool-btn" onclick="loadAlerts()" title="Refresh">↻</button>
+      <button class="tool-btn" onclick="markAllRead()" title="Mark all read" style="font-size:12px">✓</button>
+      <button class="tool-btn" onclick="clearAlerts()" title="Clear all" style="color:var(--red)">🗑️</button>
+    </div>
+    <div id="w-alert-list" style="flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+
+  <!-- Rules sub-panel -->
+  <div id="w-rules" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <button onclick="showAddRule()" style="width:100%;padding:11px;border-radius:var(--radius);background:var(--bg3);border:1px dashed var(--border);color:var(--muted);font-size:14px;cursor:pointer">＋ Add Watch Rule</button>
+    </div>
+    <div id="w-rule-list" style="flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+</div>
+
+<!-- Add Rule Sheet -->
+<div class="overlay" id="add-rule-modal" onclick="closeModal('add-rule-modal')">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Add Watch Rule</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="field"><label>Name</label><input class="field-in" id="wr-name" placeholder="e.g. Check disk space"></div>
+      <div class="field">
+        <label>Type</label>
+        <select class="field-in" id="wr-kind" onchange="updateRuleFields()">
+          <option value="disk">💾 Disk Space</option>
+          <option value="git">🌿 Git Repo</option>
+          <option value="file">📄 File Changed</option>
+          <option value="custom">⚙️ Custom Command</option>
+        </select>
+      </div>
+      <div id="wr-fields" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div class="field"><label>Check every (seconds)</label><input class="field-in" id="wr-interval" type="number" value="60" min="10"></div>
+      <button onclick="addWatchRule()" style="padding:13px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer">Add Rule</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ WORKFLOWS PANEL ════════════════════ -->
+<div class="panel" id="workflows-panel" style="flex-direction:column">
+  <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <button onclick="showAddWorkflow()" style="width:100%;padding:12px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer">⚡ New Workflow</button>
+  </div>
+  <div id="wf-stats" style="padding:6px 14px;font-size:11px;color:var(--muted);flex-shrink:0"></div>
+  <div id="wf-list" style="flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px"></div>
+</div>
+
+<!-- Add Workflow Sheet -->
+<div class="overlay" id="add-wf-modal" onclick="closeModal('add-wf-modal')">
+  <div class="sheet" onclick="event.stopPropagation()" style="max-height:90vh">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">New Workflow</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="field"><label>Name</label><input class="field-in" id="wf-name" placeholder="e.g. Disk alert"></div>
+      <div class="field"><label>Description</label><input class="field-in" id="wf-desc" placeholder="What does this do?"></div>
+      <div class="field">
+        <label>Trigger</label>
+        <select class="field-in" id="wf-trigger-kind" onchange="updateWfTriggerFields()">
+          <option value="disk_above">💾 Disk above %</option>
+          <option value="cpu_above">🔥 CPU above %</option>
+          <option value="time_of_day">🕐 Time of day</option>
+          <option value="file_changed">📄 File changed</option>
+          <option value="interval">⏱️ Every N seconds</option>
+          <option value="command_output">⚙️ Command output contains</option>
+        </select>
+      </div>
+      <div id="wf-trigger-fields" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div class="field">
+        <label>Action</label>
+        <select class="field-in" id="wf-action-kind" onchange="updateWfActionFields()">
+          <option value="notify">🔔 Desktop notification</option>
+          <option value="shell">⚙️ Run shell command</option>
+          <option value="telegram">✈️ Send Telegram message</option>
+          <option value="slack">💬 Send Slack message</option>
+          <option value="email">📧 Send email</option>
+        </select>
+      </div>
+      <div id="wf-action-fields" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div class="field"><label>Check every (seconds)</label><input class="field-in" id="wf-interval" type="number" value="60" min="10"></div>
+      <button onclick="createWorkflow()" style="padding:13px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer">⚡ Create Workflow</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ KNOWLEDGE BASE PANEL ════════════════════ -->
+<div class="panel" id="kb-panel" style="flex-direction:column">
+  <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div class="ptab active" id="kb-tab-ask" onclick="switchKbTab('ask',this)">💬 Ask</div>
+    <div class="ptab" id="kb-tab-index" onclick="switchKbTab('index',this)">📥 Index</div>
+    <div class="ptab" id="kb-tab-sources" onclick="switchKbTab('sources',this)">📚 Sources</div>
+  </div>
+
+  <!-- Ask sub-panel -->
+  <div id="kb-ask" style="flex:1;display:flex;flex-direction:column;overflow:hidden;padding:14px;gap:10px">
+    <div id="kb-stats-bar" style="font-size:12px;color:var(--muted)">Loading...</div>
+    <textarea id="kb-question" style="flex:1;max-height:100px;background:var(--bg3);border:1.5px solid var(--border);border-radius:var(--radius);padding:12px;color:var(--text);font-size:14px;resize:none;outline:none;font-family:var(--font)" placeholder="Ask a question about your indexed files..."></textarea>
+    <button onclick="kbAsk()" style="padding:13px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer">📚 Ask Knowledge Base</button>
+    <div id="kb-answer" style="flex:1;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;color:var(--text);display:none"></div>
+  </div>
+
+  <!-- Index sub-panel -->
+  <div id="kb-index" style="display:none;padding:14px;flex-direction:column;gap:12px">
+    <div style="font-size:13px;color:var(--muted)">Add files or folders to the knowledge base so ByteFlow can answer questions about them.</div>
+    <div class="field"><label>File or folder path</label><input class="field-in" id="kb-path" placeholder="e.g. ~/projects/myapp or ~/notes.md"></div>
+    <label class="toggle-opt" style="font-size:13px;color:var(--muted)"><input type="checkbox" id="kb-recursive" checked style="accent-color:var(--accent);width:15px;height:15px"> Include subfolders</label>
+    <button onclick="kbAdd()" style="padding:13px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer">📥 Index</button>
+    <div id="kb-index-result" style="font-size:13px;color:var(--green);min-height:20px"></div>
+  </div>
+
+  <!-- Sources sub-panel -->
+  <div id="kb-sources" style="display:none;flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px">
+  </div>
+</div>
+
+<!-- ════════════════════ INTEGRATIONS PANEL ════════════════════ -->
+<div class="panel" id="integrations-panel" style="flex-direction:column;overflow-y:auto">
+  <div style="padding:14px;display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:13px;color:var(--muted)">Connect ByteFlow to external apps. Set environment variables to activate.</div>
+
+    <!-- Telegram -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:24px">✈️</span>
+        <div style="flex:1"><div style="font-weight:700">Telegram</div><div style="font-size:12px;color:var(--muted)">Send/receive messages via Bot API</div></div>
+        <span id="tg-status" style="font-size:11px;color:var(--muted)">—</span>
+      </div>
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <input class="field-in" id="tg-msg" placeholder="Message to send...">
+        <button onclick="igSendTelegram()" style="padding:10px;border-radius:10px;background:var(--accent);border:none;color:#fff;cursor:pointer;font-size:13px">Send</button>
+        <div style="font-size:11px;color:var(--muted)">Set env: TELEGRAM_TOKEN, TELEGRAM_CHAT_ID</div>
+      </div>
+    </div>
+
+    <!-- Email -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:24px">📧</span>
+        <div style="flex:1"><div style="font-weight:700">Email</div><div style="font-size:12px;color:var(--muted)">Send via SMTP, read via IMAP</div></div>
+        <span id="em-status" style="font-size:11px;color:var(--muted)">—</span>
+      </div>
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <input class="field-in" id="em-to" placeholder="To: email@example.com">
+        <input class="field-in" id="em-subject" placeholder="Subject">
+        <textarea class="field-in" id="em-body" placeholder="Body..." style="height:70px;resize:none"></textarea>
+        <div style="display:flex;gap:8px">
+          <button onclick="igSendEmail()" style="flex:1;padding:10px;border-radius:10px;background:var(--accent);border:none;color:#fff;cursor:pointer;font-size:13px">Send</button>
+          <button onclick="igReadInbox()" style="flex:1;padding:10px;border-radius:10px;background:var(--bg2);border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:13px">Read Inbox</button>
+        </div>
+        <div id="em-inbox" style="font-size:12px;color:var(--text2);max-height:150px;overflow-y:auto"></div>
+        <div style="font-size:11px;color:var(--muted)">Set env: EMAIL_USERNAME, EMAIL_PASSWORD, EMAIL_SMTP_HOST</div>
+      </div>
+    </div>
+
+    <!-- Slack -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:24px">💬</span>
+        <div style="flex:1"><div style="font-weight:700">Slack</div><div style="font-size:12px;color:var(--muted)">Post to channels via webhook</div></div>
+        <span id="sl-status" style="font-size:11px;color:var(--muted)">—</span>
+      </div>
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <input class="field-in" id="sl-msg" placeholder="Message to send...">
+        <button onclick="igSendSlack()" style="padding:10px;border-radius:10px;background:var(--accent);border:none;color:#fff;cursor:pointer;font-size:13px">Send</button>
+        <div style="font-size:11px;color:var(--muted)">Set env: SLACK_WEBHOOK_URL</div>
+      </div>
+    </div>
+
+    <div id="ig-result" style="font-size:13px;color:var(--green);padding:4px 0;min-height:20px"></div>
+  </div>
+</div>
+
+<!-- ════════════════════ HISTORY PANEL ════════════════════ -->
+<div class="panel" id="history-panel" style="flex-direction:column">
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <input id="hist-search" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:7px 14px;color:var(--text);font-size:13px;outline:none" placeholder="Search history..." oninput="searchHistory(this.value)">
+    <button class="tool-btn" onclick="newSession()" title="New chat">＋</button>
+    <button class="tool-btn" onclick="clearAllHistory()" title="Clear all" style="color:var(--red)">🗑️</button>
+  </div>
+  <div id="hist-stats" style="padding:6px 14px;font-size:11px;color:var(--muted);flex-shrink:0"></div>
+  <div id="hist-list" style="flex:1;overflow-y:auto;padding:8px 14px;display:flex;flex-direction:column;gap:6px"></div>
+</div>
+
+<!-- ════════════════════ SETTINGS PANEL ════════════════════ -->
+<div class="panel" id="settings-panel" style="flex-direction:column;overflow-y:auto">
+  <div style="padding:16px 14px;display:flex;flex-direction:column;gap:20px">
+
+    <!-- AI Model -->
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">🤖 AI Model</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+        <div class="srow" id="model-row">
+          <span>Model</span>
+          <select id="s-model" onchange="saveSetting('model',this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;color:var(--text);font-size:13px">
+            <option>llama3</option><option>my-buddy</option><option>mistral</option><option>phi</option><option>gemma</option>
+          </select>
+        </div>
+        <div class="srow">
+          <span>Temperature</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" min="0" max="1" step="0.1" id="s-temp" oninput="document.getElementById('s-temp-val').textContent=this.value;saveSetting('temperature',parseFloat(this.value))" style="width:80px;accent-color:var(--accent)">
+            <span id="s-temp-val" style="font-size:13px;color:var(--muted);width:24px">0.7</span>
+          </div>
+        </div>
+        <div class="srow">
+          <span>Timeout (seconds)</span>
+          <input type="number" id="s-timeout" min="10" max="300" step="10" onchange="saveSetting('response_timeout',parseInt(this.value))" style="width:70px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;color:var(--text);font-size:13px;text-align:center">
+        </div>
+      </div>
+    </div>
+
+    <!-- Appearance -->
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">🎨 Appearance</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+        <div class="srow">
+          <span>Theme</span>
+          <div style="display:flex;gap:6px">
+            <button class="theme-btn active" onclick="setTheme('dark',this)">Dark</button>
+            <button class="theme-btn" onclick="setTheme('light',this)">Light</button>
+          </div>
+        </div>
+        <div class="srow">
+          <span>Font size</span>
+          <select id="s-fontsize" onchange="saveSetting('font_size',this.value);applyFontSize(this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;color:var(--text);font-size:13px">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+          </select>
+        </div>
+        <div class="srow">
+          <span>Show timestamps</span>
+          <label class="toggle"><input type="checkbox" id="s-timestamps" onchange="saveSetting('show_timestamps',this.checked)"><span class="tslider"></span></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Voice -->
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">🎙️ Voice</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+        <div class="srow">
+          <span>Voice enabled</span>
+          <label class="toggle"><input type="checkbox" id="s-voice" checked onchange="saveSetting('voice_enabled',this.checked)"><span class="tslider"></span></label>
+        </div>
+        <div class="srow">
+          <span>Speech rate</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" min="0.5" max="2" step="0.1" id="s-rate" oninput="document.getElementById('s-rate-val').textContent=this.value;saveSetting('voice_rate',parseFloat(this.value))" style="width:80px;accent-color:var(--accent)">
+            <span id="s-rate-val" style="font-size:13px;color:var(--muted);width:28px">1.0</span>
+          </div>
+        </div>
+        <div class="srow">
+          <span>Language</span>
+          <select id="s-lang" onchange="saveSetting('voice_language',this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;color:var(--text);font-size:13px">
+            <option value="en-US">English (US)</option>
+            <option value="en-GB">English (UK)</option>
+            <option value="ar-SA">Arabic</option>
+            <option value="fr-FR">French</option>
+            <option value="de-DE">German</option>
+            <option value="es-ES">Spanish</option>
+            <option value="hi-IN">Hindi</option>
+            <option value="ja-JP">Japanese</option>
+            <option value="zh-CN">Chinese</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Memory -->
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">🧠 Memory</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+        <div class="srow">
+          <span>Memory enabled</span>
+          <label class="toggle"><input type="checkbox" id="s-memory" checked onchange="saveSetting('memory_enabled',this.checked)"><span class="tslider"></span></label>
+        </div>
+        <div class="srow">
+          <span>Max history</span>
+          <input type="number" id="s-maxhist" min="100" max="5000" step="100" onchange="saveSetting('memory_max_history',parseInt(this.value))" style="width:80px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;color:var(--text);font-size:13px;text-align:center">
+        </div>
+        <div class="srow" style="border:none">
+          <span>Clear all memory</span>
+          <button onclick="clearMemory()" style="background:rgba(255,79,106,0.1);border:1px solid rgba(255,79,106,0.3);border-radius:8px;padding:6px 12px;color:var(--red);font-size:13px;cursor:pointer">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shortcuts -->
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">⚡ Shortcuts</div>
+      <div id="shortcuts-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+      <button onclick="newShortcutPrompt()" style="width:100%;padding:12px;border-radius:var(--radius);background:var(--bg3);border:1px dashed var(--border);color:var(--muted);font-size:14px;cursor:pointer">＋ Add Shortcut</button>
+    </div>
+
+    <!-- About -->
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">ℹ️ About</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--muted)">Version</span><span>2.0.0</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--muted)">Core API</span><span id="about-core">localhost:7861</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--muted)">Model</span><span id="about-model">—</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--muted)">Sessions</span><span id="about-sessions">—</span></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -1456,6 +1844,871 @@ function copyText(btn, text) {
 }
 
 // ════════════════════════════════════════════════════════════
+// WAKE WORD — "Hey ByteFlow"
+// ════════════════════════════════════════════════════════════
+let wakeRec = null;
+let wakeActive = false;
+
+function startWakeWord(keyword = 'hey byteflow') {
+  if (!checkSpeechSupport() || wakeActive) return;
+  wakeActive = true;
+  const loop = () => {
+    if (!wakeActive) return;
+    const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+    wakeRec = new R();
+    wakeRec.lang = _settings.voice_language || 'en-US';
+    wakeRec.interimResults = false;
+    wakeRec.continuous = false;
+    wakeRec.onresult = e => {
+      const text = e.results[0][0].transcript.toLowerCase();
+      if (text.includes(keyword.toLowerCase())) {
+        // Wake word detected!
+        pushNotif('Wake word detected', 'Listening...', '🎙️');
+        switchTab('voice');
+        setTimeout(toggleVoice, 400);
+      }
+    };
+    wakeRec.onend = () => { if (wakeActive) setTimeout(loop, 500); };
+    wakeRec.onerror = () => { if (wakeActive) setTimeout(loop, 2000); };
+    try { wakeRec.start(); } catch(e) {}
+  };
+  loop();
+  document.getElementById('wake-status').textContent = `Listening for "${keyword}"`;
+}
+
+function stopWakeWord() {
+  wakeActive = false;
+  wakeRec?.stop();
+  document.getElementById('wake-status').textContent = 'Wake word off';
+}
+
+function toggleWakeWord() {
+  if (wakeActive) stopWakeWord();
+  else startWakeWord(_settings.wake_word || 'hey byteflow');
+  document.getElementById('wake-toggle').checked = wakeActive;
+  saveSetting('wake_word_enabled', wakeActive);
+}
+let termCwd = '~';
+let termHistory = [];
+let termHistIdx = -1;
+
+async function initTerminal() {
+  const r = await fetch(`${API}/terminal/cwd`);
+  const d = await r.json();
+  termCwd = d.cwd || '~';
+  document.getElementById('term-cwd').textContent = termCwd;
+  termPrint('ByteFlow Terminal — type any shell command\n', '#666');
+}
+
+function termKey(e) {
+  const inp = document.getElementById('term-input');
+  if (e.key === 'Enter') {
+    const cmd = inp.value.trim();
+    if (!cmd) return;
+    termHistory.unshift(cmd);
+    termHistIdx = -1;
+    inp.value = '';
+    termExec(cmd);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (termHistIdx < termHistory.length - 1) {
+      termHistIdx++;
+      inp.value = termHistory[termHistIdx];
+    }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (termHistIdx > 0) { termHistIdx--; inp.value = termHistory[termHistIdx]; }
+    else { termHistIdx = -1; inp.value = ''; }
+  }
+}
+
+async function termExec(cmd) {
+  termPrint(`❯ ${cmd}\n`, '#4f8cff');
+  // Handle cd locally
+  if (cmd.startsWith('cd ')) {
+    const newDir = cmd.slice(3).trim();
+    termCwd = newDir.startsWith('/') ? newDir : (termCwd + '/' + newDir);
+    document.getElementById('term-cwd').textContent = termCwd;
+    termPrint(`${termCwd}\n`, '#666');
+    return;
+  }
+  if (cmd === 'clear' || cmd === 'cls') { termClear(); return; }
+  try {
+    const r = await fetch(`${API}/terminal`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({command: cmd, cwd: termCwd, timeout: 30})
+    });
+    const d = await r.json();
+    if (d.stdout) termPrint(d.stdout, '#00e5a0');
+    if (d.stderr) termPrint(d.stderr, '#ff8c4f');
+    if (!d.ok && d.error) termPrint(d.error + '\n', '#ff4f6a');
+    if (d.returncode !== 0 && !d.stderr && !d.stdout)
+      termPrint(`[exit ${d.returncode}]\n`, '#ff4f6a');
+  } catch(e) {
+    termPrint(`Error: ${e.message}\n`, '#ff4f6a');
+  }
+}
+
+function termPrint(text, color='#e8e8f0') {
+  const out = document.getElementById('term-output');
+  const span = document.createElement('span');
+  span.style.color = color;
+  span.textContent = text;
+  out.appendChild(span);
+  out.scrollTop = out.scrollHeight;
+}
+
+function termClear() {
+  document.getElementById('term-output').innerHTML = '';
+}
+
+function termCopy() {
+  const text = document.getElementById('term-output').textContent;
+  navigator.clipboard?.writeText(text);
+  pushNotif('Copied', 'Terminal output copied', '📋');
+}
+
+// ════════════════════════════════════════════════════════════
+// WATCHER / PROACTIVE ALERTS
+// ════════════════════════════════════════════════════════════
+let watchTab = 'alerts';
+
+function switchWatchTab(tab, el) {
+  watchTab = tab;
+  document.querySelectorAll('#watch-panel .ptab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('w-alerts').style.display = tab==='alerts'?'flex':'none';
+  document.getElementById('w-rules').style.display = tab==='rules'?'flex':'none';
+  if (tab==='alerts') loadAlerts();
+  if (tab==='rules') loadRules();
+}
+
+async function loadAlerts() {
+  try {
+    const r = await fetch(`${API}/watch/alerts?limit=50`);
+    const d = await r.json();
+    const count = d.unread || 0;
+    document.getElementById('w-unread-label').textContent =
+      `${d.alerts?.length||0} alerts · ${count} unread`;
+    // Update notif badge
+    if (count > 0) {
+      document.getElementById('notif-badge').classList.add('show');
+      document.getElementById('notif-badge').textContent = Math.min(count,9);
+    }
+    const list = document.getElementById('w-alert-list');
+    if (!d.alerts?.length) {
+      list.innerHTML='<div class="empty-state"><span class="empty-icon">✅</span>No alerts — all good!</div>';
+      return;
+    }
+    list.innerHTML = d.alerts.map(a=>`
+      <div style="background:var(--bg3);border:1px solid ${a.level==='error'?'rgba(255,79,106,.3)':a.level==='warning'?'rgba(255,217,79,.2)':'var(--border)'};border-radius:var(--radius);padding:12px 14px;opacity:${a.read?.8:1}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:14px;font-weight:600">${esc(a.title)}</span>
+          <span style="font-size:11px;color:var(--muted)">${fmtDate(a.ts)}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text2)">${esc(a.body)}</div>
+        <div style="margin-top:8px;display:flex;gap:6px">
+          <span style="font-size:11px;background:var(--bg2);border-radius:20px;padding:2px 8px;color:var(--muted)">${a.kind}</span>
+          ${!a.read?`<button onclick="markRead('${a.id}')" style="font-size:11px;background:none;border:none;color:var(--accent);cursor:pointer">Mark read</button>`:''}
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    document.getElementById('w-alert-list').innerHTML=
+      '<div class="empty-state"><span class="empty-icon">⚠️</span>Could not load alerts</div>';
+  }
+}
+
+async function markRead(id) {
+  await fetch(`${API}/watch/alerts/read`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alert_id:id})});
+  loadAlerts();
+}
+
+async function markAllRead() {
+  await fetch(`${API}/watch/alerts/read`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alert_id:null})});
+  loadAlerts();
+}
+
+async function clearAlerts() {
+  await fetch(`${API}/watch/alerts`,{method:'DELETE'});
+  loadAlerts();
+}
+
+async function loadRules() {
+  const r = await fetch(`${API}/watch/rules`);
+  const d = await r.json();
+  const list = document.getElementById('w-rule-list');
+  if (!d.rules?.length) {
+    list.innerHTML='<div class="empty-state"><span class="empty-icon">⚙️</span>No watch rules yet</div>';
+    return;
+  }
+  list.innerHTML = d.rules.map(r=>`
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:14px;font-weight:600">${esc(r.name)}</span>
+        <label class="toggle"><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleRule('${r.id}')"><span class="tslider"></span></label>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${r.kind} · every ${r.interval}s</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="triggerRule('${r.id}')" style="flex:1;padding:7px;border-radius:8px;background:var(--bg2);border:1px solid var(--border);color:var(--text2);font-size:12px;cursor:pointer">▶ Run now</button>
+        <button onclick="deleteRule('${r.id}')" style="padding:7px 12px;border-radius:8px;background:none;border:1px solid rgba(255,79,106,.2);color:var(--red);font-size:12px;cursor:pointer">🗑️</button>
+      </div>
+    </div>`).join('');
+}
+
+function showAddRule() { updateRuleFields(); openModal('add-rule-modal'); }
+
+function updateRuleFields() {
+  const kind = document.getElementById('wr-kind').value;
+  const fields = document.getElementById('wr-fields');
+  const fieldMap = {
+    disk: '<div class="field"><label>Path</label><input class="field-in" id="wr-path" value="/"></div><div class="field"><label>Alert when % full ></label><input class="field-in" id="wr-threshold" type="number" value="85" min="50" max="99"></div>',
+    git: '<div class="field"><label>Repo path</label><input class="field-in" id="wr-repo" placeholder="~/myproject"></div>',
+    file: '<div class="field"><label>File path to watch</label><input class="field-in" id="wr-fpath" placeholder="~/project/config.py"></div>',
+    custom: '<div class="field"><label>Shell command</label><input class="field-in" id="wr-cmd" placeholder="curl -s https://myapp.com/health"></div><div class="field"><label>Expected output (optional)</label><input class="field-in" id="wr-expect" placeholder="ok"></div>',
+  };
+  fields.innerHTML = fieldMap[kind] || '';
+}
+
+async function addWatchRule() {
+  const kind = document.getElementById('wr-kind').value;
+  const name = document.getElementById('wr-name').value.trim();
+  const interval = parseInt(document.getElementById('wr-interval').value) || 60;
+  if (!name) { alert('Name required'); return; }
+  const configMap = {
+    disk: {path: document.getElementById('wr-path')?.value||'/', threshold: parseInt(document.getElementById('wr-threshold')?.value||85)},
+    git: {repo: document.getElementById('wr-repo')?.value||'.'},
+    file: {path: document.getElementById('wr-fpath')?.value||''},
+    custom: {command: document.getElementById('wr-cmd')?.value||'', expect: document.getElementById('wr-expect')?.value||''},
+  };
+  const rule_id = name.toLowerCase().replace(/\s+/g,'_') + '_' + Date.now();
+  const r = await fetch(`${API}/watch/rules`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({rule_id, name, kind, config: configMap[kind], interval})
+  });
+  const d = await r.json();
+  if (d.ok) { pushNotif('Watch rule added', name, '👁️'); closeModal('add-rule-modal'); loadRules(); }
+}
+
+async function toggleRule(id) {
+  await fetch(`${API}/watch/rules/${id}/toggle`, {method:'POST'});
+  loadRules();
+}
+
+async function triggerRule(id) {
+  const r = await fetch(`${API}/watch/rules/${id}/trigger`, {method:'POST'});
+  const d = await r.json();
+  pushNotif('Rule triggered', d.message||'Done', '👁️');
+  setTimeout(loadAlerts, 1000);
+}
+
+async function deleteRule(id) {
+  await fetch(`${API}/watch/rules/${id}`, {method:'DELETE'});
+  loadRules();
+}
+
+// Poll for new alerts every 30s
+setInterval(async ()=>{
+  try {
+    const r = await fetch(`${API}/watch/alerts?unread_only=true&limit=1`);
+    const d = await r.json();
+    if (d.unread > 0) {
+      document.getElementById('notif-badge').classList.add('show');
+      document.getElementById('notif-badge').textContent = Math.min(d.unread,9);
+    }
+  } catch(e) {}
+}, 30000);
+let _histSessions = [];
+
+async function loadHistory(q='') {
+  try {
+    const r = await fetch(`${API}/history`);
+    const d = await r.json();
+    _histSessions = d.sessions || [];
+    const stats = d.stats || {};
+    document.getElementById('hist-stats').textContent =
+      `${stats.total_sessions||0} sessions · ${stats.total_messages||0} messages`;
+    document.getElementById('about-sessions').textContent =
+      `${stats.total_sessions||0} sessions`;
+    renderHistSessions(q ? _histSessions.filter(s=>s.title.toLowerCase().includes(q.toLowerCase())) : _histSessions, d.active_session);
+  } catch(e) {
+    document.getElementById('hist-list').innerHTML =
+      '<div class="empty-state"><span class="empty-icon">⚠️</span>Could not load history</div>';
+  }
+}
+
+function renderHistSessions(sessions, activeId) {
+  const list = document.getElementById('hist-list');
+  if (!sessions.length) {
+    list.innerHTML = '<div class="empty-state"><span class="empty-icon">🕐</span>No chat history yet</div>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => `
+    <div class="hist-card ${s.session_id===activeId?'active-sess':''}" onclick="loadHistSession('${s.session_id}')">
+      ${s.pinned ? '<span style="position:absolute;top:10px;left:10px;font-size:12px">📌</span>' : ''}
+      <div class="hist-title" style="${s.pinned?'padding-left:20px':''}">${esc(s.title)}</div>
+      <div class="hist-meta">${s.message_count} messages · ${fmtDate(s.updated)}</div>
+      <div class="hist-actions">
+        <button class="hist-act-btn" onclick="event.stopPropagation();pinSession('${s.session_id}')">${s.pinned?'📌':'📍'}</button>
+        <button class="hist-act-btn" onclick="event.stopPropagation();renameSession('${s.session_id}')">✏️</button>
+        <button class="hist-act-btn del" onclick="event.stopPropagation();deleteSession('${s.session_id}')">🗑️</button>
+      </div>
+    </div>`).join('');
+}
+
+async function loadHistSession(sessionId) {
+  // Switch active session and load messages into chat
+  await fetch(`${API}/history/${sessionId}/switch`, {method:'POST'});
+  const r = await fetch(`${API}/history/${sessionId}`);
+  const d = await r.json();
+  if (!d.ok) return;
+  // Clear chat and populate with session messages
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+  for (const m of d.session.messages||[]) {
+    addMsg(m.role==='user'?'user':'bot', m.content);
+  }
+  switchTab('chat');
+  pushNotif('Session loaded', d.session.title, '🕐');
+}
+
+async function newSession() {
+  const r = await fetch(`${API}/history/new`, {method:'POST'});
+  const d = await r.json();
+  document.getElementById('messages').innerHTML =
+    '<div class="msg system"><div class="bubble">👋 New conversation started.</div></div>';
+  switchTab('chat');
+  pushNotif('New session', 'Started a fresh conversation', '＋');
+}
+
+async function pinSession(id) {
+  await fetch(`${API}/history/${id}/pin`, {method:'POST'});
+  loadHistory();
+}
+
+async function renameSession(id) {
+  const name = prompt('New name:'); if (!name) return;
+  await fetch(`${API}/history/${id}/rename`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:name})
+  });
+  loadHistory();
+}
+
+async function deleteSession(id) {
+  if (!confirm('Delete this session?')) return;
+  await fetch(`${API}/history/${id}`, {method:'DELETE'});
+  loadHistory();
+}
+
+async function clearAllHistory() {
+  if (!confirm('Clear ALL chat history? This cannot be undone.')) return;
+  await fetch(`${API}/history`, {method:'DELETE'});
+  document.getElementById('messages').innerHTML =
+    '<div class="msg system"><div class="bubble">👋 History cleared. Fresh start!</div></div>';
+  loadHistory();
+}
+
+function searchHistory(q) { renderHistSessions(
+  q ? _histSessions.filter(s=>s.title.toLowerCase().includes(q.toLowerCase())) : _histSessions,
+  null
+);}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
+  return d.toLocaleDateString();
+}
+
+// ════════════════════════════════════════════════════════════
+// SETTINGS PANEL
+// ════════════════════════════════════════════════════════════
+let _settings = {};
+
+async function loadSettings() {
+  try {
+    const r = await fetch(`${API}/settings`);
+    const d = await r.json();
+    _settings = d.settings || {};
+    applySettings(_settings);
+    // Populate model dropdown with available models
+    loadModelOptions();
+    // Load shortcuts
+    renderShortcuts(_settings.shortcuts || []);
+    // About section
+    document.getElementById('about-model').textContent = _settings.model || '—';
+  } catch(e) {
+    console.warn('Could not load settings:', e);
+  }
+}
+
+function applySettings(s) {
+  // Model
+  const msel = document.getElementById('s-model');
+  if (msel) { msel.value = s.model || 'llama3'; }
+  // Temperature
+  const temp = document.getElementById('s-temp');
+  if (temp) { temp.value = s.temperature ?? 0.7; document.getElementById('s-temp-val').textContent = temp.value; }
+  // Timeout
+  const tout = document.getElementById('s-timeout');
+  if (tout) tout.value = s.response_timeout ?? 120;
+  // Toggles
+  const toggles = {
+    's-timestamps': 'show_timestamps',
+    's-voice': 'voice_enabled',
+    's-memory': 'memory_enabled',
+  };
+  for (const [id, key] of Object.entries(toggles)) {
+    const el = document.getElementById(id);
+    if (el) el.checked = s[key] !== false;
+  }
+  // Voice rate
+  const rate = document.getElementById('s-rate');
+  if (rate) { rate.value = s.voice_rate ?? 1.0; document.getElementById('s-rate-val').textContent = rate.value; }
+  // Language
+  const lang = document.getElementById('s-lang');
+  if (lang && s.voice_language) lang.value = s.voice_language;
+  // Font size
+  const fs = document.getElementById('s-fontsize');
+  if (fs && s.font_size) { fs.value = s.font_size; applyFontSize(s.font_size); }
+  // Max history
+  const mh = document.getElementById('s-maxhist');
+  if (mh) mh.value = s.memory_max_history ?? 2000;
+}
+
+async function loadModelOptions() {
+  try {
+    const r = await fetch(`${API}/models`);
+    const d = await r.json();
+    const sel = document.getElementById('s-model');
+    if (!sel || !d.models?.length) return;
+    sel.innerHTML = d.models.map(m=>`<option value="${esc(m)}" ${m===_settings.model?'selected':''}>${esc(m)}</option>`).join('');
+  } catch(e) {}
+}
+
+async function saveSetting(key, value) {
+  try {
+    await fetch(`${API}/settings`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({changes:{[key]:value}})
+    });
+    _settings[key] = value;
+    if (key==='model') document.getElementById('about-model').textContent = value;
+  } catch(e) {
+    console.warn('Could not save setting:', e);
+  }
+}
+
+function setTheme(theme, btn) {
+  document.querySelectorAll('.theme-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  saveSetting('theme', theme);
+  if (theme === 'light') {
+    document.documentElement.style.setProperty('--bg','#f5f5fa');
+    document.documentElement.style.setProperty('--bg2','#ebebf5');
+    document.documentElement.style.setProperty('--bg3','#e0e0ee');
+    document.documentElement.style.setProperty('--bg4','#d5d5e8');
+    document.documentElement.style.setProperty('--text','#111118');
+    document.documentElement.style.setProperty('--text2','#333348');
+    document.documentElement.style.setProperty('--muted','#888899');
+    document.documentElement.style.setProperty('--border','#ccccdd');
+  } else {
+    document.documentElement.style.setProperty('--bg','#0a0a0f');
+    document.documentElement.style.setProperty('--bg2','#111118');
+    document.documentElement.style.setProperty('--bg3','#1a1a25');
+    document.documentElement.style.setProperty('--bg4','#222233');
+    document.documentElement.style.setProperty('--text','#e8e8f0');
+    document.documentElement.style.setProperty('--text2','#b0b0c8');
+    document.documentElement.style.setProperty('--muted','#666680');
+    document.documentElement.style.setProperty('--border','#2a2a3a');
+  }
+}
+
+function applyFontSize(size) {
+  const map = {small:'13px', medium:'15px', large:'17px'};
+  document.documentElement.style.setProperty('--fs', map[size]||'15px');
+}
+
+async function clearMemory() {
+  if (!confirm('Clear all memory? ByteFlow will forget past conversations.')) return;
+  await fetch(`${API}/memory`, {method:'DELETE'});
+  pushNotif('Memory cleared', 'ByteFlow memory has been reset', '🧠');
+}
+
+// ── Shortcuts ──────────────────────────────────────────────────────────────────
+function renderShortcuts(shortcuts) {
+  const list = document.getElementById('shortcuts-list');
+  if (!shortcuts.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:10px">No shortcuts yet</div>';
+    return;
+  }
+  list.innerHTML = shortcuts.map(s=>`
+    <div class="sc-card">
+      <span class="sc-icon">${esc(s.icon||'⚡')}</span>
+      <div class="sc-info">
+        <div class="sc-name">${esc(s.name)}</div>
+        <div class="sc-steps">${s.steps?.length||0} steps</div>
+      </div>
+      <button class="sc-run" onclick="runShortcut('${s.id}')">▶ Run</button>
+      <button class="sc-del-btn" onclick="deleteShortcut('${s.id}')">✕</button>
+    </div>`).join('');
+}
+
+async function runShortcut(id) {
+  pushNotif('Running shortcut...', '', '⚡');
+  const r = await fetch(`${API}/settings/shortcuts/${id}/run`, {method:'POST'});
+  const d = await r.json();
+  if (d.ok) {
+    const summary = d.results.map(r=>`${r.ok?'✅':'❌'} ${r.step}`).join('\n');
+    addMsg('system', `⚡ Shortcut "${d.shortcut}" complete:\n${summary}`);
+    switchTab('chat');
+  }
+}
+
+async function newShortcutPrompt() {
+  const name = prompt('Shortcut name (e.g. Morning Routine):'); if (!name) return;
+  const icon = prompt('Icon (emoji, e.g. ☀️):') || '⚡';
+  const stepsRaw = prompt('Steps (one per line):'); if (!stepsRaw) return;
+  const steps = stepsRaw.split('\n').map(s=>s.trim()).filter(Boolean);
+  const r = await fetch(`${API}/settings/shortcuts`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, icon, steps})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    _settings.shortcuts = (_settings.shortcuts||[]).concat(d.shortcut);
+    renderShortcuts(_settings.shortcuts);
+    pushNotif('Shortcut created', name, icon);
+  }
+}
+
+async function deleteShortcut(id) {
+  await fetch(`${API}/settings/shortcuts/${id}`, {method:'DELETE'});
+  _settings.shortcuts = (_settings.shortcuts||[]).filter(s=>s.id!==id);
+  renderShortcuts(_settings.shortcuts);
+}
+
+// Also add shortcuts to quick-actions bar in chat
+function addShortcutChips(shortcuts) {
+  const bar = document.getElementById('quick-actions');
+  // Remove old shortcut chips
+  bar.querySelectorAll('.sc-chip').forEach(c=>c.remove());
+  for (const s of (shortcuts||[]).slice(0,3)) {
+    const chip = document.createElement('div');
+    chip.className = 'qa-chip sc-chip';
+    chip.innerHTML = `<span class="ce">${esc(s.icon||'⚡')}</span>${esc(s.name)}`;
+    chip.onclick = () => runShortcut(s.id);
+    bar.appendChild(chip);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// WORKFLOWS
+// ════════════════════════════════════════════════════════════
+async function loadWorkflows() {
+  const r = await fetch(`${API}/workflows`);
+  const d = await r.json();
+  const stats = d.stats || {};
+  document.getElementById('wf-stats').textContent =
+    `${stats.total||0} workflows · ${stats.enabled||0} active · ${stats.total_runs||0} total runs`;
+  const list = document.getElementById('wf-list');
+  if (!d.workflows?.length) {
+    list.innerHTML = '<div class="empty-state"><span class="empty-icon">⚡</span>No workflows yet.<br>Create one to automate your laptop.</div>';
+    return;
+  }
+  list.innerHTML = d.workflows.map(wf => `
+    <div style="background:var(--bg3);border:1px solid ${wf.enabled?'rgba(79,140,255,.2)':'var(--border)'};border-radius:var(--radius);padding:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:14px;font-weight:700">${esc(wf.name)}</span>
+        <label class="toggle"><input type="checkbox" ${wf.enabled?'checked':''} onchange="toggleWf('${wf.workflow_id}')"><span class="tslider"></span></label>
+      </div>
+      ${wf.description?`<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${esc(wf.description)}</div>`:''}
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+        Trigger: <span style="color:var(--text2)">${wf.trigger?.kind||'?'}</span> ·
+        Action: <span style="color:var(--text2)">${wf.actions?.[0]?.kind||'?'}</span> ·
+        Runs: <span style="color:var(--accent)">${wf.run_count||0}</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button onclick="runWfNow('${wf.workflow_id}')" style="flex:1;padding:7px;border-radius:8px;background:var(--bg2);border:1px solid var(--border);color:var(--text2);font-size:12px;cursor:pointer">▶ Run now</button>
+        <button onclick="deleteWf('${wf.workflow_id}')" style="padding:7px 12px;border-radius:8px;background:none;border:1px solid rgba(255,79,106,.2);color:var(--red);font-size:12px;cursor:pointer">🗑️</button>
+      </div>
+      ${wf.runs?.length ? `<div style="margin-top:8px;font-size:11px;color:var(--muted)">Last run: ${fmtDate(wf.runs[wf.runs.length-1]?.ts)}</div>` : ''}
+    </div>`).join('');
+}
+
+function showAddWorkflow() {
+  updateWfTriggerFields();
+  updateWfActionFields();
+  openModal('add-wf-modal');
+}
+
+function updateWfTriggerFields() {
+  const kind = document.getElementById('wf-trigger-kind').value;
+  const f = document.getElementById('wf-trigger-fields');
+  const map = {
+    disk_above: '<div class="field"><label>Path</label><input class="field-in" id="wft-path" value="/"></div><div class="field"><label>Threshold (%)</label><input class="field-in" id="wft-threshold" type="number" value="90"></div>',
+    cpu_above: '<div class="field"><label>Threshold (%)</label><input class="field-in" id="wft-cpu" type="number" value="80"></div>',
+    time_of_day: '<div class="field"><label>Time (HH:MM)</label><input class="field-in" id="wft-time" type="time" value="09:00"></div>',
+    file_changed: '<div class="field"><label>File path</label><input class="field-in" id="wft-file" placeholder="~/project/config.py"></div>',
+    interval: '<div class="field"><label>Every N seconds</label><input class="field-in" id="wft-secs" type="number" value="3600"></div>',
+    command_output: '<div class="field"><label>Command</label><input class="field-in" id="wft-cmd" placeholder="curl -s https://myapp/health"></div><div class="field"><label>Output must contain</label><input class="field-in" id="wft-contains" placeholder="ok"></div>',
+  };
+  f.innerHTML = map[kind] || '';
+}
+
+function updateWfActionFields() {
+  const kind = document.getElementById('wf-action-kind').value;
+  const f = document.getElementById('wf-action-fields');
+  const map = {
+    notify: '<div class="field"><label>Title</label><input class="field-in" id="wfa-title" placeholder="ByteFlow Alert"></div><div class="field"><label>Body</label><input class="field-in" id="wfa-body" placeholder="Something happened!"></div>',
+    shell: '<div class="field"><label>Command</label><input class="field-in" id="wfa-cmd" placeholder="git -C ~/project pull"></div>',
+    telegram: '<div class="field"><label>Message</label><input class="field-in" id="wfa-msg" placeholder="Alert from ByteFlow!"></div>',
+    slack: '<div class="field"><label>Message</label><input class="field-in" id="wfa-msg" placeholder="Alert from ByteFlow!"></div>',
+    email: '<div class="field"><label>To</label><input class="field-in" id="wfa-to" placeholder="you@example.com"></div><div class="field"><label>Subject</label><input class="field-in" id="wfa-sub" placeholder="ByteFlow Alert"></div><div class="field"><label>Body</label><input class="field-in" id="wfa-body" placeholder="Something happened!"></div>',
+  };
+  f.innerHTML = map[kind] || '';
+}
+
+async function createWorkflow() {
+  const name = document.getElementById('wf-name').value.trim();
+  const desc = document.getElementById('wf-desc').value.trim();
+  const tkind = document.getElementById('wf-trigger-kind').value;
+  const akind = document.getElementById('wf-action-kind').value;
+  const interval = parseInt(document.getElementById('wf-interval').value) || 60;
+  if (!name) { alert('Name required'); return; }
+
+  const triggerMap = {
+    disk_above: {kind:'disk_above', path: document.getElementById('wft-path')?.value||'/', threshold: parseInt(document.getElementById('wft-threshold')?.value||90)},
+    cpu_above: {kind:'cpu_above', threshold: parseInt(document.getElementById('wft-cpu')?.value||80)},
+    time_of_day: {kind:'time_of_day', time: document.getElementById('wft-time')?.value||'09:00'},
+    file_changed: {kind:'file_changed', path: document.getElementById('wft-file')?.value||''},
+    interval: {kind:'interval', seconds: parseInt(document.getElementById('wft-secs')?.value||3600)},
+    command_output: {kind:'command_output', command: document.getElementById('wft-cmd')?.value||'', contains: document.getElementById('wft-contains')?.value||''},
+  };
+
+  const actionMap = {
+    notify: {kind:'notify', title: document.getElementById('wfa-title')?.value||'ByteFlow', body: document.getElementById('wfa-body')?.value||''},
+    shell: {kind:'shell', command: document.getElementById('wfa-cmd')?.value||''},
+    telegram: {kind:'telegram', message: document.getElementById('wfa-msg')?.value||''},
+    slack: {kind:'slack', message: document.getElementById('wfa-msg')?.value||''},
+    email: {kind:'email', to: document.getElementById('wfa-to')?.value||'', subject: document.getElementById('wfa-sub')?.value||'', body: document.getElementById('wfa-body')?.value||''},
+  };
+
+  const wid = name.toLowerCase().replace(/\s+/g,'_') + '_' + Date.now();
+  const r = await fetch(`${API}/workflows`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({workflow_id:wid, name, description:desc, trigger:triggerMap[tkind], actions:[actionMap[akind]], check_interval:interval})
+  });
+  const d = await r.json();
+  if (d.ok) { pushNotif('Workflow created', name, '⚡'); closeModal('add-wf-modal'); loadWorkflows(); }
+  else alert(d.error || 'Failed');
+}
+
+async function toggleWf(id) {
+  await fetch(`${API}/workflows/${id}/toggle`, {method:'POST'});
+  loadWorkflows();
+}
+
+async function runWfNow(id) {
+  pushNotif('Running workflow...', '', '⚡');
+  const r = await fetch(`${API}/workflows/${id}/run`, {method:'POST'});
+  const d = await r.json();
+  if (d.ok) pushNotif('Workflow done', d.results?.join(' | ')||'', '✅');
+  loadWorkflows();
+}
+
+async function deleteWf(id) {
+  if (!confirm('Delete this workflow?')) return;
+  await fetch(`${API}/workflows/${id}`, {method:'DELETE'});
+  loadWorkflows();
+}
+
+// ════════════════════════════════════════════════════════════
+// KNOWLEDGE BASE
+// ════════════════════════════════════════════════════════════
+let kbTab = 'ask';
+
+function switchKbTab(tab, el) {
+  kbTab = tab;
+  document.querySelectorAll('#kb-panel .ptab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('kb-ask').style.display = tab==='ask'?'flex':'none';
+  document.getElementById('kb-index').style.display = tab==='index'?'flex':'none';
+  document.getElementById('kb-sources').style.display = tab==='sources'?'flex':'none';
+  if (tab==='sources') loadKbSources();
+  if (tab==='ask') loadKbStats();
+}
+
+async function loadKbStats() {
+  try {
+    const r = await fetch(`${API}/kb`);
+    const d = await r.json();
+    const s = d.stats || {};
+    document.getElementById('kb-stats-bar').textContent =
+      `${s.total_sources||0} sources · ${s.total_chunks||0} chunks indexed`;
+  } catch(e) {}
+}
+
+async function kbAdd() {
+  const path = document.getElementById('kb-path').value.trim();
+  const recursive = document.getElementById('kb-recursive').checked;
+  if (!path) { alert('Path required'); return; }
+  document.getElementById('kb-index-result').textContent = 'Indexing...';
+  const r = await fetch(`${API}/kb/add`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({path, recursive})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    const msg = d.chunks ? `✅ Indexed ${d.chunks} chunks from ${d.source||d.folder}` : `✅ ${d.indexed} files, ${d.total_chunks} chunks`;
+    document.getElementById('kb-index-result').textContent = msg;
+    pushNotif('Knowledge Base', msg, '📚');
+  } else {
+    document.getElementById('kb-index-result').textContent = '❌ ' + d.error;
+    document.getElementById('kb-index-result').style.color = 'var(--red)';
+  }
+}
+
+async function kbAsk() {
+  const q = document.getElementById('kb-question').value.trim();
+  if (!q) return;
+  const ans = document.getElementById('kb-answer');
+  ans.style.display = 'block';
+  ans.textContent = 'Searching knowledge base...';
+  const r = await fetch(`${API}/kb/ask`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({question: q, top_k: 3})
+  });
+  const d = await r.json();
+  ans.textContent = d.answer || d.error || 'No answer';
+  if (d.sources_used > 0) {
+    ans.textContent += `\n\n[Based on ${d.sources_used} source chunk(s)]`;
+  }
+}
+
+async function loadKbSources() {
+  const r = await fetch(`${API}/kb`);
+  const d = await r.json();
+  const list = document.getElementById('kb-sources');
+  if (!d.sources?.length) {
+    list.innerHTML = '<div class="empty-state"><span class="empty-icon">📚</span>No sources indexed yet</div>';
+    return;
+  }
+  list.innerHTML = d.sources.map(s => `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:14px;font-weight:600">${esc(s.title)}</span>
+        <button onclick="removeKbSource('${esc(s.source_id)}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">${s.chunk_count} chunks · ${(s.size_bytes/1024).toFixed(1)}KB</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.path)}</div>
+    </div>`).join('');
+}
+
+async function removeKbSource(id) {
+  if (!confirm('Remove this source from KB?')) return;
+  await fetch(`${API}/kb/source`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id:id})});
+  loadKbSources();
+}
+
+// ════════════════════════════════════════════════════════════
+// INTEGRATIONS
+// ════════════════════════════════════════════════════════════
+async function loadIntegrations() {
+  try {
+    const r = await fetch(`${API}/integrations`);
+    const d = await r.json();
+    const ig = d.integrations || {};
+    document.getElementById('tg-status').textContent = ig.telegram?.configured ? '✅ Active' : '⚠️ Not set';
+    document.getElementById('em-status').textContent = ig.email?.configured ? '✅ Active' : '⚠️ Not set';
+    document.getElementById('sl-status').textContent = ig.slack?.configured ? '✅ Active' : '⚠️ Not set';
+    document.getElementById('tg-status').style.color = ig.telegram?.configured ? 'var(--green)' : 'var(--muted)';
+    document.getElementById('em-status').style.color = ig.email?.configured ? 'var(--green)' : 'var(--muted)';
+    document.getElementById('sl-status').style.color = ig.slack?.configured ? 'var(--green)' : 'var(--muted)';
+  } catch(e) {}
+}
+
+async function igSendTelegram() {
+  const text = document.getElementById('tg-msg').value.trim();
+  if (!text) return;
+  const r = await fetch(`${API}/integrations/telegram/send`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text})
+  });
+  const d = await r.json();
+  document.getElementById('ig-result').textContent = d.ok ? '✅ Telegram message sent' : '❌ ' + d.error;
+  if (d.ok) document.getElementById('tg-msg').value = '';
+}
+
+async function igSendEmail() {
+  const to = document.getElementById('em-to').value.trim();
+  const subject = document.getElementById('em-subject').value.trim();
+  const body = document.getElementById('em-body').value.trim();
+  if (!to || !subject) { alert('To and Subject required'); return; }
+  const r = await fetch(`${API}/integrations/email/send`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({to, subject, body})
+  });
+  const d = await r.json();
+  document.getElementById('ig-result').textContent = d.ok ? '✅ Email sent' : '❌ ' + d.error;
+}
+
+async function igReadInbox() {
+  const r = await fetch(`${API}/integrations/email/inbox?n=5`);
+  const d = await r.json();
+  const inbox = document.getElementById('em-inbox');
+  if (!d.ok) { inbox.textContent = '❌ ' + d.error; return; }
+  inbox.innerHTML = d.messages?.map(m =>
+    `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="font-weight:600;font-size:12px">${esc(m.subject)}</div>
+      <div style="color:var(--muted);font-size:11px">From: ${esc(m.from)} · ${esc(m.date)}</div>
+      <div style="font-size:12px;margin-top:2px">${esc(m.body?.slice(0,100))}...</div>
+    </div>`
+  ).join('') || '<div style="color:var(--muted);font-size:13px">No messages</div>';
+}
+
+async function igSendSlack() {
+  const text = document.getElementById('sl-msg').value.trim();
+  if (!text) return;
+  const r = await fetch(`${API}/integrations/slack/send`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text})
+  });
+  const d = await r.json();
+  document.getElementById('ig-result').textContent = d.ok ? '✅ Slack message sent' : '❌ ' + d.error;
+  if (d.ok) document.getElementById('sl-msg').value = '';
+}
+
+// ════════════════════════════════════════════════════════════
+// UPDATE switchTab - final version with all panels
+// ════════════════════════════════════════════════════════════
+const _origSwitchTab = switchTab;
+switchTab = function(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  const panel = document.getElementById(name + '-panel');
+  if (panel) panel.classList.add('active');
+  const tabs = ['chat','voice','files','code','terminal','schedule','watch','workflows','kb','integrations','plugins','devices','history','settings'];
+  const idx = tabs.indexOf(name);
+  if (idx >= 0) document.querySelectorAll('.nav-tab')[idx]?.classList.add('active');
+  if (name === 'files') browseDir(currentPath);
+  if (name === 'schedule') loadSchedule();
+  if (name === 'plugins') renderPlugins();
+  if (name === 'devices') initDevices();
+  if (name === 'history') loadHistory();
+  if (name === 'settings') loadSettings();
+  if (name === 'terminal') initTerminal();
+  if (name === 'watch') loadAlerts();
+  if (name === 'workflows') loadWorkflows();
+  if (name === 'kb') loadKbStats();
+  if (name === 'integrations') loadIntegrations();
+}
+
+// ════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════
 checkStatus();
@@ -1463,6 +2716,12 @@ setInterval(checkStatus, 20000);
 setInterval(()=>{
   if (document.getElementById('schedule-panel').classList.contains('active')) loadSchedule();
 }, 4000);
+
+// Load settings on startup to apply theme/font
+loadSettings().then(()=>{
+  if (_settings.shortcuts) addShortcutChips(_settings.shortcuts);
+});
+
 document.getElementById('msg-input').focus();
 </script>
 </body>
