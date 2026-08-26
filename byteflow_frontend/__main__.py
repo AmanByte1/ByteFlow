@@ -21,7 +21,7 @@ def main():
     p.add_argument("--host",     default="0.0.0.0")
     p.add_argument("--port",     type=int, default=7860)
     p.add_argument("--core-url", default="http://localhost:7861", dest="core_url")
-    p.add_argument("--model",    default="llama2", help="Model for --with-core")
+    p.add_argument("--model",    default="llama3", help="Model for --with-core")
     p.add_argument("--with-core", action="store_true", dest="with_core",
                    help="Also start byteflow core API server")
     p.add_argument("--open",     action="store_true", help="Open browser")

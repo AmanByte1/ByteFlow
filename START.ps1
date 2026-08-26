@@ -106,7 +106,7 @@ Write-Host "  Press Ctrl+C to stop ByteFlow" -ForegroundColor Gray
 Write-Host ""
 
 try {
-    python -m byteflow_frontend --port 7860 --core-port 7861
+    python byteflow_frontend/__main__.py --port 7860 --core-url http://localhost:7861
 } finally {
     # Cleanup on exit
     Write-Host ""
