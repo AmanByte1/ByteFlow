@@ -105,6 +105,9 @@ Write-Host ""
 Write-Host "  Press Ctrl+C to stop ByteFlow" -ForegroundColor Gray
 Write-Host ""
 
+# Set PYTHONPATH so byteflow_frontend is importable without pip install
+$env:PYTHONPATH = $PSScriptRoot
+
 try {
     python byteflow_frontend/__main__.py --port 7860 --core-url http://localhost:7861
 } finally {

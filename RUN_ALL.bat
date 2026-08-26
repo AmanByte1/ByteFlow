@@ -38,12 +38,12 @@ timeout /t 2 /nobreak >nul
 
 :: Start ByteFlow Core in new window
 echo [4/4] Starting ByteFlow Core (port 7861)...
-start "ByteFlow Core" cmd /k "cd /d %~dp0 && python byteflow/api_server.py --model %MODEL% --port 7861"
+start "ByteFlow Core" cmd /k "cd /d %~dp0 && set PYTHONPATH=%~dp0 && python byteflow/api_server.py --model %MODEL% --port 7861"
 timeout /t 4 /nobreak >nul
 
 :: Start Frontend in new window
 echo     Starting ByteFlow Frontend (port 7860)...
-start "ByteFlow Frontend" cmd /k "cd /d %~dp0 && python byteflow_frontend/__main__.py --port 7860 --core-url http://localhost:7861"
+start "ByteFlow Frontend" cmd /k "cd /d %~dp0 && set PYTHONPATH=%~dp0 && python byteflow_frontend/__main__.py --port 7860 --core-url http://localhost:7861"
 
 echo.
 echo  ==========================================

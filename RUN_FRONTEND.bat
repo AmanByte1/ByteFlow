@@ -4,12 +4,14 @@ cd /d "%~dp0"
 
 echo.
 echo  ==========================================
+set PYTHONPATH=%~dp0
 echo   ByteFlow Frontend - Starting...
 echo  ==========================================
 echo.
 
 pip install fastapi "uvicorn[standard]" httpx qrcode --quiet --exists-action i
 
+set PYTHONPATH=%~dp0
 echo Starting ByteFlow Frontend on http://localhost:7860
 echo Open on your phone: check the QR code or URL above
 echo.

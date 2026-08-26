@@ -40,16 +40,19 @@ echo.
 echo  Checking dependencies...
 pip install fastapi "uvicorn[standard]" httpx pydantic qrcode psutil pyperclip --quiet --exists-action i 2>nul
 
-:: ── Start Ollama serve (silent, ignore if already running) ─
+:: ── CRITICAL: set PYTHONPATH so byteflow_frontend is importable ──
+set PYTHONPATH=%~dp0
+
+:: ── Start Ollama serve (silent) ────────────────────────────
 start /min "" ollama serve 2>nul
 timeout /t 2 /nobreak >nul
 
 :: ── Start ByteFlow Core in a new window ───────────────────
 echo  Starting ByteFlow Core (port 7861)...
-start "ByteFlow Core" cmd /k "cd /d %~dp0 && python byteflow/api_server.py --model %MODEL% --port 7861"
+start "ByteFlow Core" cmd /k "cd /d %~dp0 && set PYTHONPATH=%~dp0 && python byteflow/api_server.py --model %MODEL% --port 7861"
 timeout /t 4 /nobreak >nul
 
-:: ── Start Frontend — one command, correct args ────────────
+:: ── Start Frontend ─────────────────────────────────────────
 echo  Starting ByteFlow Frontend (port 7860)...
 echo.
 echo  ==========================================

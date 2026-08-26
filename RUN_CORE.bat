@@ -34,6 +34,7 @@ echo Using model: %MODEL%
 echo.
 
 :: Start core API — run from project folder so imports work
+set PYTHONPATH=%~dp0
 echo Starting ByteFlow Core on http://localhost:7861
 echo.
 python byteflow/api_server.py --model %MODEL% --port 7861
