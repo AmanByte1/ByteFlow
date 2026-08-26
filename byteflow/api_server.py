@@ -697,14 +697,14 @@ def start(port: int = 7861, model: str = "llama2"):
     print(f"  Model : {_model}")
     print(f"{'='*48}\n")
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=7861)
-    p.add_argument("--model", default="llama2")
+    p.add_argument("--model", default="llama3")
     args = p.parse_args()
     start(args.port, args.model)
 

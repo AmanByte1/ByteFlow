@@ -381,14 +381,14 @@ def run_companion(agent=None, model="llama3", enable_desktop_tools=True,
                 lbl.configure(bg=C["panel_bg"], fg=C["accent"])
             else:
                 lbl.configure(bg="#0a0f1e", fg=C["text2"])
-        # Show/hide frames
+        # Show/hide frames — always fill both + expand so chat area grows
         chat_frame.pack_forget()
         alerts_frame.pack_forget()
         quick_frame.pack_forget()
         status_frame.pack_forget()
         frames = {"chat": chat_frame, "alerts": alerts_frame,
                   "quick": quick_frame, "status": status_frame}
-        frames[name].pack(fill="both", expand=True)
+        frames[name].pack(fill="both", expand=True, side="top")
         if name == "alerts":
             refresh_alerts()
         if name == "status":
@@ -408,9 +408,20 @@ def run_companion(agent=None, model="llama3", enable_desktop_tools=True,
     # ── CHAT frame ────────────────────────────────────────────────────────────
     chat_frame = tk.Frame(panel, bg=C["panel_bg"])
 
-    # Message display
+    # KEY: pack bottom widgets FIRST so Tkinter reserves their space,
+    # then the message area expands to fill everything above them.
+
+    # 1. Separator at very bottom
+    input_sep = tk.Frame(chat_frame, bg=C["panel_bdr"], height=1)
+    input_sep.pack(side="bottom", fill="x")
+
+    # 2. Input area at bottom
+    input_area = tk.Frame(chat_frame, bg="#080c18", pady=8, padx=10)
+    input_area.pack(side="bottom", fill="x")
+
+    # 3. Message area fills remaining space
     msg_frame = tk.Frame(chat_frame, bg=C["panel_bg"])
-    msg_frame.pack(fill="both", expand=True, padx=0, pady=0)
+    msg_frame.pack(side="top", fill="both", expand=True)
 
     msg_scroll = tk.Scrollbar(msg_frame, bg=C["panel_bg"],
                                troughcolor=C["panel_bg"],
@@ -464,13 +475,6 @@ def run_companion(agent=None, model="llama3", enable_desktop_tools=True,
         msg_text.insert("end", "\n")
         msg_text.configure(state="disabled")
         msg_text.see("end")
-
-    # Input area
-    input_sep = tk.Frame(chat_frame, bg=C["panel_bdr"], height=1)
-    input_sep.pack(fill="x")
-
-    input_area = tk.Frame(chat_frame, bg="#080c18", pady=8, padx=10)
-    input_area.pack(fill="x", side="bottom")
 
     entry_var = tk.StringVar()
     entry = tk.Entry(
