@@ -148,6 +148,86 @@ PANEL_W  = 340
 PANEL_H  = 480
 
 
+def _build_face(canvas, size=140):
+    """Build the reusable face layers used by companion integrations/tests."""
+    center = size / 2
+    head_radius = size * 0.42
+    head = canvas.create_oval(
+        center - head_radius, center - head_radius,
+        center + head_radius, center + head_radius,
+        fill=C["panel_bg"], outline=C["accent"],
+    )
+    eye_layers = {}
+    for prefix, eye_x in (("l_", center - size * 0.17), ("r_", center + size * 0.17)):
+        eye_y = center
+        outer = size * 0.10
+        inner = size * 0.075
+        core = size * 0.045
+        eye_layers[f"{prefix}glow_outer"] = canvas.create_oval(
+            eye_x - outer * 1.5, eye_y - outer * 1.5,
+            eye_x + outer * 1.5, eye_y + outer * 1.5,
+            fill=C["ring"], outline="",
+        )
+        eye_layers[f"{prefix}glow_inner"] = canvas.create_oval(
+            eye_x - outer, eye_y - outer, eye_x + outer, eye_y + outer,
+            fill=C["ring"], outline="",
+        )
+        eye_layers[f"{prefix}ring"] = canvas.create_oval(
+            eye_x - outer, eye_y - outer, eye_x + outer, eye_y + outer,
+            fill=C["accent"], outline="",
+        )
+        eye_layers[f"{prefix}iris_outer"] = canvas.create_oval(
+            eye_x - inner, eye_y - inner, eye_x + inner, eye_y + inner,
+            fill=C["accent"], outline="",
+        )
+        eye_layers[f"{prefix}iris_inner"] = canvas.create_oval(
+            eye_x - inner * 0.75, eye_y - inner * 0.75,
+            eye_x + inner * 0.75, eye_y + inner * 0.75,
+            fill=C["orb3"], outline="",
+        )
+        eye_layers[f"{prefix}core"] = canvas.create_oval(
+            eye_x - core, eye_y - core, eye_x + core, eye_y + core,
+            fill="#ffffff", outline="",
+        )
+        eye_layers[f"{prefix}spark"] = canvas.create_oval(
+            eye_x - core * 0.35, eye_y - core * 1.8,
+            eye_x + core * 0.35, eye_y - core * 1.1,
+            fill="#ffffff", outline="",
+        )
+        eye_layers[f"{prefix}spark_small"] = canvas.create_oval(
+            eye_x + core * 0.9, eye_y - core * 0.2,
+            eye_x + core * 1.3, eye_y + core * 0.2,
+            fill="#ffffff", outline="",
+        )
+        eye_layers[f"{prefix}iris"] = eye_layers[f"{prefix}iris_inner"]
+
+    antenna_items = [
+        canvas.create_line(center, center - head_radius, center, center - size * 0.48,
+                           fill=C["accent"], width=2),
+        canvas.create_oval(center - 4, center - size * 0.52,
+                           center + 4, center - size * 0.46,
+                           fill=C["orb3"], outline=""),
+    ]
+    return head, eye_layers, eye_layers, antenna_items
+
+
+def _set_eyes_color(canvas, left_eye, right_eye, color):
+    """Update the visible iris and ring layers for both eyes."""
+    for eyes in (left_eye, right_eye):
+        for prefix in ("l_", "r_"):
+            canvas.itemconfig(eyes[f"{prefix}iris_outer"], fill=color)
+            canvas.itemconfig(eyes[f"{prefix}ring"], fill=color)
+
+
+def _set_eyes_visible(canvas, left_eye, right_eye, visible):
+    """Blink by hiding only the inner eye layers, leaving sockets visible."""
+    state = "normal" if visible else "hidden"
+    for eyes in (left_eye, right_eye):
+        for prefix in ("l_", "r_"):
+            for key in ("iris_outer", "iris_inner", "core", "spark", "spark_small"):
+                canvas.itemconfig(eyes[f"{prefix}{key}"], state=state)
+
+
 def _hex_lerp(c1, c2, t):
     """Interpolate between two hex colors."""
     r1,g1,b1 = int(c1[1:3],16), int(c1[3:5],16), int(c1[5:7],16)
