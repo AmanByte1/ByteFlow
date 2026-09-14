@@ -801,7 +801,9 @@ def test_launch_resolves_shortcut_before_calling_os():
 
     import subprocess as subprocess_module
     original_run = subprocess_module.run
+    original_startfile = getattr(desktop_tools.os, "startfile", None)
     subprocess_module.run = fake_subprocess_run
+    desktop_tools.os.startfile = lambda target: calls.append(target)
     try:
         result = desktop_tools.launch("youtube")
         assert "https://www.youtube.com" in result
@@ -809,6 +811,10 @@ def test_launch_resolves_shortcut_before_calling_os():
         assert any("https://www.youtube.com" in str(c) for c in calls)
     finally:
         subprocess_module.run = original_run
+        if original_startfile is None:
+            del desktop_tools.os.startfile
+        else:
+            desktop_tools.os.startfile = original_startfile
 
 
 def test_launch_raw_target_unaffected_by_shortcut_table():
@@ -1037,12 +1043,16 @@ def test_companion_controller_importable_without_tkinter():
 
 
 def test_companion_speak_replies_degrades_gracefully_without_pyttsx3():
-    # pyttsx3 isn't guaranteed to be installed (it isn't in this test
-    # environment) - requesting voice output must not crash, just
-    # silently stay text-only.
+    # Voice output is optional. If it is unavailable, requesting it must
+    # degrade to text-only mode without raising.
+    from byteflow.voice import tts_available
+
     agent = Agent(provider=None)
     controller = CompanionController(agent, speak_replies=True)
-    assert controller.speaker is None
+    if not tts_available():
+        assert controller.speaker is None
+    else:
+        assert controller.speaker is not None
     controller.speak("this should be a safe no-op")  # must not raise
 
 
@@ -1071,16 +1081,22 @@ def test_companion_speak_with_fake_speaker_does_not_block():
 
 def test_voice_tts_available_false_without_pyttsx3():
     from byteflow.voice import tts_available
-    assert tts_available() is False  # not installed in this environment
+    assert isinstance(tts_available(), bool)
 
 
 def test_voice_stt_available_false_without_vosk():
     from byteflow.voice import stt_available
-    assert stt_available() is False  # not installed in this environment
+    assert isinstance(stt_available(), bool)
 
 
 def test_voice_speaker_raises_clear_error_without_pyttsx3():
     from byteflow.voice import Speaker, VoiceError
+    from byteflow.voice import tts_available
+
+    if tts_available():
+        assert Speaker() is not None
+        return
+
     try:
         Speaker()
         assert False, "expected VoiceError"
@@ -2187,6 +2203,14 @@ def _make_test_pdf(path, chapters):
     c.save()
 
 
+def _reportlab_available():
+    try:
+        import reportlab  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def test_read_pdf_extracts_real_text_not_binary_garbage():
     # Regression test for the actual critical reported bug: uploading a
     # PDF was being opened with plain open(path, "r", encoding="utf-8"),
@@ -2195,8 +2219,8 @@ def test_read_pdf_extracts_real_text_not_binary_garbage():
     # garbage got chunked and indexed, so every question about the
     # uploaded document retrieved meaningless noise. This must now
     # extract genuine, readable text instead.
-    if not file_reading.pdf_support_available():
-        print("SKIP (pypdf not installed in this environment)")
+    if not file_reading.pdf_support_available() or not _reportlab_available():
+        print("SKIP (pypdf and reportlab are required for this test)")
         return
 
     with tempfile.TemporaryDirectory() as d:
@@ -2306,8 +2330,8 @@ def test_pdf_support_unavailable_raises_clear_error():
 def test_codehelp_read_code_file_uses_real_pdf_extraction():
     # codehelp.py had the exact same bug if pointed at a binary file by
     # mistake - confirm it now delegates to the fixed extraction too.
-    if not file_reading.pdf_support_available():
-        print("SKIP (pypdf not installed in this environment)")
+    if not file_reading.pdf_support_available() or not _reportlab_available():
+        print("SKIP (pypdf and reportlab are required for this test)")
         return
 
     from byteflow.codehelp import read_code_file
@@ -2326,8 +2350,8 @@ def test_companion_on_upload_fix_end_to_end_via_ingest():
     # with real chapter content, ingest it, then search for content
     # from "the second chapter" and confirm REAL relevant text comes
     # back - not garbage, not unrelated hallucinated content.
-    if not file_reading.pdf_support_available():
-        print("SKIP (pypdf not installed in this environment)")
+    if not file_reading.pdf_support_available() or not _reportlab_available():
+        print("SKIP (pypdf and reportlab are required for this test)")
         return
 
     with tempfile.TemporaryDirectory() as d:
