@@ -1,15 +1,17 @@
+"""
+ByteFlow Ollama Provider
+=========================
+Wraps the Ollama Python client. Supports model aliases (q1, mb, l3, etc.)
+and automatic model switching via voice commands.
+"""
+from __future__ import annotations
+
+
 class OllamaProvider:
-    def __init__(self, model="llama3", num_predict=2048):
+    def __init__(self, model: str = "llama3", num_predict: int = 2048):
         """
-        num_predict: max tokens Ollama will generate per response.
-        Set generously (not left at whatever the model's own default
-        is, which can be quite small for some models/configs) because
-        a cut-off response is worse than a slow one here - a truncated
-        code-generation response missing its closing code fence was a
-        real observed bug (see agent.py's code() method, which now
-        also defends against this by validating syntax before
-        executing, but avoiding the truncation in the first place is
-        better than only catching it after the fact).
+        model: full model name OR alias (q1, mb, l3, buddy, etc.)
+        num_predict: max tokens per response
         """
         try:
             import ollama
@@ -19,17 +21,33 @@ class OllamaProvider:
                 "Install it with: pip install ollama"
             ) from e
 
+        # Resolve alias → full model name
+        from byteflow.model_registry import resolve_model
         self._ollama = ollama
-        self.model = model
+        self.model = resolve_model(model)
         self.num_predict = num_predict
 
-    def generate(self, prompt):
+    def switch_model(self, model: str) -> str:
+        """Switch to a different model. Returns the resolved model name."""
+        from byteflow.model_registry import resolve_model
+        self.model = resolve_model(model)
+        return self.model
+
+    def generate(self, prompt: str) -> str:
         response = self._ollama.chat(
             model=self.model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             options={"num_predict": self.num_predict},
         )
-
         return response["message"]["content"]
+
+    def list_local_models(self) -> list[str]:
+        """List models currently installed in Ollama."""
+        try:
+            result = self._ollama.list()
+            return [m.model for m in result.models]
+        except Exception:
+            return []
+
+    def __repr__(self):
+        return f"OllamaProvider(model={self.model!r})"

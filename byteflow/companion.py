@@ -1,47 +1,43 @@
 """
-ByteFlow Desktop Companion
-===========================
-A floating holographic orb that lives on your desktop.
-
-Design:
-  - Animated glowing orb (idle → pulse, thinking → spin, speaking → wave)
-  - Glassmorphism chat panel slides in from the side
-  - Tabs: Chat · Alerts · Shortcuts · Status
-  - Drag anywhere to reposition
-  - Right-click → quit
+ByteFlow Companion v3
+=====================
+Floating holographic orb with full power:
+  - All 56 automation tasks
+  - Voice model switching (say "switch to q1")
+  - Settings panel with model picker
+  - Self-understanding (knows its own capabilities)
+  - Voice input + TTS output
+  - Quick actions, alerts, shortcuts
+  - Real-time status
 
 Run:
-    python -m byteflow.companion
-    python -m byteflow.companion_core --model llama3  (full power mode)
+    python byteflow/companion.py
+    python byteflow/companion.py --model q1
 """
 
-import queue
-import threading
-import math
-import time
+import queue, threading, math, time, os, sys, json
+from pathlib import Path
 
 
-# ══════════════════════════════════════════════════════════════
-# CompanionController — the non-visual brain (unchanged)
-# ══════════════════════════════════════════════════════════════
-
+# ══════════════════════════════════════════════════════════
+# CONTROLLER
+# ══════════════════════════════════════════════════════════
 class CompanionController:
-    """
-    Non-visual brain: owns the Agent, queues replies thread-safely.
-    Kept separate from Tkinter so it can be tested without a display.
-    """
-
     def __init__(self, agent, speak_replies=False):
         self.agent = agent
         self.replies = queue.Queue()
         self._busy = False
-        self._pending_messages = []
+        self._pending = []
         self._lock = threading.Lock()
         self.speaker = None
+        self._last_reply = ""
         if speak_replies:
-            from .voice import Speaker, tts_available
-            if tts_available():
-                self.speaker = Speaker()
+            try:
+                from .voice import Speaker, tts_available
+                if tts_available():
+                    self.speaker = Speaker()
+            except Exception:
+                pass
 
     @property
     def busy(self):
@@ -50,49 +46,45 @@ class CompanionController:
     def speak(self, text):
         if not self.speaker or not text:
             return
-        def worker():
-            try:
-                self.speaker.speak(text)
-            except Exception:
-                pass
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=lambda: self.speaker.speak(text), daemon=True).start()
 
     def send(self, message):
-        if not message or not message.strip():
+        if not message.strip():
             return
         with self._lock:
             if self._busy:
-                self._pending_messages.append(message)
-                self.replies.put("[Still thinking — queued your message]")
+                self._pending.append(message)
+                self.replies.put("[Queued — still thinking...]")
                 return
             self._busy = True
-        self._run_worker(message)
+        self._run(message)
 
-    def _run_worker(self, message):
+    def _run(self, message):
         def worker():
             try:
                 result = self.agent.run(message)
-                reply = self._format_result(result)
+                reply = self._fmt(result)
             except Exception as e:
                 reply = f"[Error: {e}]"
+            self._last_reply = reply
             self.replies.put(reply)
-            next_message = None
+            nxt = None
             with self._lock:
-                if self._pending_messages:
-                    next_message = self._pending_messages.pop(0)
+                if self._pending:
+                    nxt = self._pending.pop(0)
                 else:
                     self._busy = False
-            if next_message is not None:
-                self._run_worker(next_message)
+            if nxt:
+                self._run(nxt)
         threading.Thread(target=worker, daemon=True).start()
 
     @staticmethod
-    def _format_result(result):
+    def _fmt(result):
         if isinstance(result, dict) and "code" in result:
             lines = ["Here's the code:", "", result["code"]]
-            exec_result = result.get("result")
-            if result.get("executed") and exec_result is not None:
-                lines += ["", "Output:", exec_result.format()]
+            r = result.get("result")
+            if result.get("executed") and r is not None:
+                lines += ["", "Output:", r.format()]
             return "\n".join(lines)
         return str(result)
 
@@ -101,12 +93,12 @@ class CompanionController:
         if reply.startswith("Here's the code:"):
             if "Output:" in reply:
                 out = reply.split("Output:", 1)[1].strip()
-                out = out.replace("--- stdout ---", "").replace("--- stderr ---", "").strip()
+                out = out.replace("--- stdout ---","").replace("--- stderr ---","").strip()
                 if out:
-                    return f"I wrote the code and ran it. The result was: {out}"
-                return "I wrote the code and ran it, but there was no output."
-            return "I wrote the code for you — take a look."
-        return reply
+                    return f"Done. The output was: {out}"
+                return "Code written and executed — no output."
+            return "I wrote the code for you."
+        return reply[:300]
 
     def poll_reply(self):
         try:
@@ -115,853 +107,907 @@ class CompanionController:
             return None
 
 
-# ══════════════════════════════════════════════════════════════
-# HOLOGRAPHIC ORB — drawing helpers
-# ══════════════════════════════════════════════════════════════
-
-# Color palette
+# ══════════════════════════════════════════════════════════
+# COLORS & CONSTANTS
+# ══════════════════════════════════════════════════════════
 C = {
-    "bg":        "#080c14",
-    "orb1":      "#4f8cff",
-    "orb2":      "#7c4fff",
-    "orb3":      "#00e5a0",
-    "orb_idle":  "#4f8cff",
-    "orb_think": "#ffd94f",
-    "orb_speak": "#00e5a0",
-    "orb_alert": "#ff4f6a",
-    "panel_bg":  "#0d1220",
-    "panel_bdr": "#1e2d4a",
-    "text":      "#e8e8f0",
-    "text2":     "#8899bb",
-    "accent":    "#4f8cff",
-    "green":     "#00e5a0",
-    "red":       "#ff4f6a",
-    "yellow":    "#ffd94f",
-    "user_msg":  "#1a2a4a",
-    "bot_msg":   "#111a2e",
-    "tab_act":   "#4f8cff",
-    "ring":      "#1a2540",
+    "void":    "#03040a",
+    "deep":    "#070b14",
+    "ink":     "#0c1220",
+    "surface": "#111b2e",
+    "lift":    "#172338",
+    "rim":     "#1f3048",
+    "border":  "#243650",
+    "cyan":    "#00d4c8",
+    "cyan2":   "#007d76",
+    "amber":   "#f0a030",
+    "rose":    "#e05870",
+    "violet":  "#9060f0",
+    "green":   "#40d080",
+    "t1":      "#ddeeff",
+    "t2":      "#7aa0c0",
+    "t3":      "#3a5878",
+    "t4":      "#1e3050",
+    # orb states
+    "idle":    "#00d4c8",
+    "think":   "#f0a030",
+    "speak":   "#40d080",
+    "alert":   "#e05870",
+    "listen":  "#9060f0",
 }
 
-ORB_SIZE = 90       # orb canvas width/height
-PANEL_W  = 340
-PANEL_H  = 480
+PANEL_W, PANEL_H = 400, 560
+ORB_S = 100   # canvas size
 
 
-def _build_face(canvas, size=140):
-    """Build the reusable face layers used by companion integrations/tests."""
-    center = size / 2
-    head_radius = size * 0.42
-    head = canvas.create_oval(
-        center - head_radius, center - head_radius,
-        center + head_radius, center + head_radius,
-        fill=C["panel_bg"], outline=C["accent"],
-    )
-    eye_layers = {}
-    for prefix, eye_x in (("l_", center - size * 0.17), ("r_", center + size * 0.17)):
-        eye_y = center
-        outer = size * 0.10
-        inner = size * 0.075
-        core = size * 0.045
-        eye_layers[f"{prefix}glow_outer"] = canvas.create_oval(
-            eye_x - outer * 1.5, eye_y - outer * 1.5,
-            eye_x + outer * 1.5, eye_y + outer * 1.5,
-            fill=C["ring"], outline="",
-        )
-        eye_layers[f"{prefix}glow_inner"] = canvas.create_oval(
-            eye_x - outer, eye_y - outer, eye_x + outer, eye_y + outer,
-            fill=C["ring"], outline="",
-        )
-        eye_layers[f"{prefix}ring"] = canvas.create_oval(
-            eye_x - outer, eye_y - outer, eye_x + outer, eye_y + outer,
-            fill=C["accent"], outline="",
-        )
-        eye_layers[f"{prefix}iris_outer"] = canvas.create_oval(
-            eye_x - inner, eye_y - inner, eye_x + inner, eye_y + inner,
-            fill=C["accent"], outline="",
-        )
-        eye_layers[f"{prefix}iris_inner"] = canvas.create_oval(
-            eye_x - inner * 0.75, eye_y - inner * 0.75,
-            eye_x + inner * 0.75, eye_y + inner * 0.75,
-            fill=C["orb3"], outline="",
-        )
-        eye_layers[f"{prefix}core"] = canvas.create_oval(
-            eye_x - core, eye_y - core, eye_x + core, eye_y + core,
-            fill="#ffffff", outline="",
-        )
-        eye_layers[f"{prefix}spark"] = canvas.create_oval(
-            eye_x - core * 0.35, eye_y - core * 1.8,
-            eye_x + core * 0.35, eye_y - core * 1.1,
-            fill="#ffffff", outline="",
-        )
-        eye_layers[f"{prefix}spark_small"] = canvas.create_oval(
-            eye_x + core * 0.9, eye_y - core * 0.2,
-            eye_x + core * 1.3, eye_y + core * 0.2,
-            fill="#ffffff", outline="",
-        )
-        eye_layers[f"{prefix}iris"] = eye_layers[f"{prefix}iris_inner"]
-
-    antenna_items = [
-        canvas.create_line(center, center - head_radius, center, center - size * 0.48,
-                           fill=C["accent"], width=2),
-        canvas.create_oval(center - 4, center - size * 0.52,
-                           center + 4, center - size * 0.46,
-                           fill=C["orb3"], outline=""),
-    ]
-    return head, eye_layers, eye_layers, antenna_items
-
-
-def _set_eyes_color(canvas, left_eye, right_eye, color):
-    """Update the visible iris and ring layers for both eyes."""
-    for eyes in (left_eye, right_eye):
-        for prefix in ("l_", "r_"):
-            canvas.itemconfig(eyes[f"{prefix}iris_outer"], fill=color)
-            canvas.itemconfig(eyes[f"{prefix}ring"], fill=color)
-
-
-def _set_eyes_visible(canvas, left_eye, right_eye, visible):
-    """Blink by hiding only the inner eye layers, leaving sockets visible."""
-    state = "normal" if visible else "hidden"
-    for eyes in (left_eye, right_eye):
-        for prefix in ("l_", "r_"):
-            for key in ("iris_outer", "iris_inner", "core", "spark", "spark_small"):
-                canvas.itemconfig(eyes[f"{prefix}{key}"], state=state)
-
-
-def _hex_lerp(c1, c2, t):
-    """Interpolate between two hex colors."""
-    r1,g1,b1 = int(c1[1:3],16), int(c1[3:5],16), int(c1[5:7],16)
-    r2,g2,b2 = int(c2[1:3],16), int(c2[3:5],16), int(c2[5:7],16)
-    r = int(r1 + (r2-r1)*t)
-    g = int(g1 + (g2-g1)*t)
-    b = int(b1 + (b2-b1)*t)
+def lerp_color(c1, c2, t):
+    r1,g1,b1 = int(c1[1:3],16),int(c1[3:5],16),int(c1[5:7],16)
+    r2,g2,b2 = int(c2[1:3],16),int(c2[3:5],16),int(c2[5:7],16)
+    r=int(r1+(r2-r1)*t); g=int(g1+(g2-g1)*t); b=int(b1+(b2-b1)*t)
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def _draw_orb(canvas, cx, cy, r, color, glow_color, phase=0.0, state="idle"):
-    """
-    Draw the holographic orb on a canvas.
-    state: idle | thinking | speaking | alert
-    phase: 0..1 animation phase
-    Returns list of canvas item ids to delete on redraw.
-    """
+def draw_orb(canvas, cx, cy, r, color, phase, state):
     items = []
-    # Outer glow rings (3 layers)
-    for i, (alpha, size) in enumerate([(0.08, 2.8), (0.15, 2.2), (0.25, 1.7)]):
-        col = _hex_lerp(C["bg"], glow_color, alpha)
-        s = r * size
-        items.append(canvas.create_oval(
-            cx-s, cy-s, cx+s, cy+s,
-            fill=col, outline=""
-        ))
-
-    # Rotating ring (thinking state spins faster)
-    ring_r = r * 1.3
-    speed = 4.0 if state == "thinking" else 1.0
-    ring_angle = phase * 2 * math.pi * speed
+    # Outer glow
+    for a,s in [(0.06,3.0),(0.12,2.3),(0.22,1.8)]:
+        col = lerp_color(C["void"], color, a)
+        items.append(canvas.create_oval(cx-r*s,cy-r*s,cx+r*s,cy+r*s,fill=col,outline=""))
+    # Orbit ring 1
+    speed = 4 if state=="think" else 1.5 if state=="listen" else 1.0
+    ang = phase * 2 * math.pi * speed
     for i in range(8):
-        a = ring_angle + i * math.pi / 4
-        x = cx + ring_r * math.cos(a)
-        y = cy + ring_r * math.sin(a) * 0.35  # flatten to ellipse
-        dot_r = 2.5 if i % 2 == 0 else 1.5
-        dot_c = glow_color if i % 2 == 0 else _hex_lerp(C["bg"], glow_color, 0.5)
-        items.append(canvas.create_oval(
-            x-dot_r, y-dot_r, x+dot_r, y+dot_r,
-            fill=dot_c, outline=""
-        ))
-
-    # Second counter-rotating ring
-    ring2_r = r * 1.15
+        a = ang + i*math.pi/4
+        ox = cx + r*1.35*math.cos(a)
+        oy = cy + r*1.35*math.sin(a)*0.35
+        dr = 3 if i%2==0 else 1.5
+        col = color if i%2==0 else lerp_color(C["void"],color,0.4)
+        items.append(canvas.create_oval(ox-dr,oy-dr,ox+dr,oy+dr,fill=col,outline=""))
+    # Orbit ring 2 (counter)
     for i in range(6):
-        a = -ring_angle * 0.7 + i * math.pi / 3
-        x = cx + ring2_r * math.cos(a)
-        y = cy + ring2_r * math.sin(a) * 0.3
-        dot_r = 1.5
-        items.append(canvas.create_oval(
-            x-dot_r, y-dot_r, x+dot_r, y+dot_r,
-            fill=_hex_lerp(C["bg"], glow_color, 0.4), outline=""
-        ))
-
-    # Main orb body gradient (4 concentric ovals)
-    for t, factor in [(0.0, 1.0), (0.35, 0.82), (0.65, 0.62), (0.85, 0.38)]:
-        col = _hex_lerp(C["bg"], glow_color, 0.9 - t * 0.5)
-        s = r * factor
-        items.append(canvas.create_oval(
-            cx-s, cy-s, cx+s, cy+s,
-            fill=col, outline=""
-        ))
-
-    # Pulse wave (idle breathe / speaking ripple)
-    if state in ("idle", "speaking"):
-        pulse_r = r * (1.05 + 0.12 * math.sin(phase * 2 * math.pi))
-        items.append(canvas.create_oval(
-            cx-pulse_r, cy-pulse_r, cx+pulse_r, cy+pulse_r,
-            fill="", outline=_hex_lerp(C["bg"], glow_color, 0.3),
-            width=1.5
-        ))
-
-    # Inner bright core
-    core_r = r * 0.32
-    items.append(canvas.create_oval(
-        cx-core_r, cy-core_r, cx+core_r, cy+core_r,
-        fill=_hex_lerp(glow_color, "#ffffff", 0.4), outline=""
-    ))
-
-    # Glint / highlight
-    gx, gy = cx - r * 0.28, cy - r * 0.30
-    gr = r * 0.14
-    items.append(canvas.create_oval(
-        gx-gr, gy-gr, gx+gr, gy+gr,
-        fill="#ffffff", outline=""
-    ))
-    gx2, gy2 = cx + r * 0.18, cy - r * 0.18
-    gr2 = r * 0.07
-    items.append(canvas.create_oval(
-        gx2-gr2, gy2-gr2, gx2+gr2, gy2+gr2,
-        fill=_hex_lerp(glow_color, "#ffffff", 0.6), outline=""
-    ))
-
-    # Thinking: spinning arc indicator
-    if state == "thinking":
-        arc_start = (phase * 360 * 3) % 360
-        items.append(canvas.create_arc(
-            cx-r*1.08, cy-r*1.08, cx+r*1.08, cy+r*1.08,
-            start=arc_start, extent=90,
-            outline=glow_color, width=2, style="arc"
-        ))
-
-    # Alert: pulsing red ring
-    if state == "alert":
-        alert_r = r * (1.2 + 0.15 * abs(math.sin(phase * 2 * math.pi * 3)))
-        items.append(canvas.create_oval(
-            cx-alert_r, cy-alert_r, cx+alert_r, cy+alert_r,
-            fill="", outline=C["red"],
-            width=2
-        ))
-
+        a = -ang*0.6 + i*math.pi/3
+        ox = cx + r*1.15*math.cos(a)
+        oy = cy + r*1.15*math.sin(a)*0.28
+        items.append(canvas.create_oval(ox-1.5,oy-1.5,ox+1.5,oy+1.5,
+                                        fill=lerp_color(C["void"],color,0.35),outline=""))
+    # Body gradient
+    for t,f in [(0.0,1.0),(0.35,0.82),(0.65,0.62),(0.85,0.4)]:
+        col = lerp_color(C["void"], color, 0.9-t*0.5)
+        items.append(canvas.create_oval(cx-r*f,cy-r*f,cx+r*f,cy+r*f,fill=col,outline=""))
+    # Pulse
+    if state in ("idle","speak"):
+        pr = r*(1.05+0.1*math.sin(phase*2*math.pi))
+        items.append(canvas.create_oval(cx-pr,cy-pr,cx+pr,cy+pr,
+                     fill="",outline=lerp_color(C["void"],color,0.25),width=1.5))
+    # Thinking arc
+    if state=="think":
+        s = (phase*360*3)%360
+        items.append(canvas.create_arc(cx-r*1.1,cy-r*1.1,cx+r*1.1,cy+r*1.1,
+                     start=s,extent=100,outline=color,width=2,style="arc"))
+    # Listening bars
+    if state=="listen":
+        for i,h in enumerate([0.5,0.9,0.7,1.0,0.6]):
+            bh = r*0.5*h*(0.8+0.4*math.sin(phase*2*math.pi+i*0.8))
+            bx = cx-r*0.4+i*r*0.2
+            items.append(canvas.create_rectangle(bx-2,cy-bh,bx+2,cy+bh,fill=color,outline=""))
+    # Alert ring
+    if state=="alert":
+        ar = r*(1.2+0.15*abs(math.sin(phase*2*math.pi*3)))
+        items.append(canvas.create_oval(cx-ar,cy-ar,cx+ar,cy+ar,
+                     fill="",outline=C["rose"],width=2))
+    # Core
+    items.append(canvas.create_oval(cx-r*0.3,cy-r*0.3,cx+r*0.3,cy+r*0.3,
+                 fill=lerp_color(color,"#ffffff",0.45),outline=""))
+    # Glint
+    gx,gy,gr = cx-r*0.26,cy-r*0.28,r*0.13
+    items.append(canvas.create_oval(gx-gr,gy-gr,gx+gr,gy+gr,fill="#ffffff",outline=""))
+    gx2,gy2,gr2 = cx+r*0.16,cy-r*0.16,r*0.07
+    items.append(canvas.create_oval(gx2-gr2,gy2-gr2,gx2+gr2,gy2+gr2,
+                 fill=lerp_color(color,"#ffffff",0.6),outline=""))
     return items
 
 
-# ══════════════════════════════════════════════════════════════
-# MAIN COMPANION WINDOW
-# ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+# MAIN COMPANION
+# ══════════════════════════════════════════════════════════
+def run_companion(agent=None, model="llama3", voice_output=False,
+                  voice_input=False, enable_desktop_tools=True):
 
-def run_companion(agent=None, model="llama3", enable_desktop_tools=True,
-                  voice_input=False, voice_output=False, conversation_mode=False):
-    """
-    Launch the ByteFlow companion. Blocks until closed.
-    Right-click the orb to quit.
-    """
     import tkinter as tk
     from tkinter import font as tkfont
-    import os
 
-    # ── Build agent if not provided ───────────────────────────────────────────
+    # ── Build agent ──────────────────────────────────────────
     if agent is None:
-        from .agent import Agent
-        from .providers.ollama_provider import OllamaProvider
-        from .builtin_tools import register_builtin_tools
-        mem = os.path.join(os.path.expanduser("~"), ".byteflow", "memory.json")
-        os.makedirs(os.path.dirname(mem), exist_ok=True)
-        agent = Agent(provider=OllamaProvider(model=model), memory_path=mem)
+        from byteflow.agent import Agent
+        from byteflow.providers.ollama_provider import OllamaProvider
+        from byteflow.builtin_tools import register_builtin_tools
+        from byteflow.model_registry import resolve_model
+        mem = Path.home() / ".byteflow" / "memory.json"
+        mem.parent.mkdir(exist_ok=True)
+        real_model = resolve_model(model)
+        provider = OllamaProvider(model=real_model)
+        agent = Agent(provider=provider, memory_path=str(mem))
         register_builtin_tools(agent)
         if enable_desktop_tools:
             try:
-                from .desktop_tools import register_desktop_tools
+                from byteflow.desktop_tools import register_desktop_tools
                 register_desktop_tools(agent)
             except Exception:
                 pass
 
+    # Wire automator
+    try:
+        from byteflow_automator import Automator
+        from byteflow.tools import Tool
+        _auto = Automator()
+        for task in _auto.registry.all():
+            if task.safe:
+                agent.register_tool(Tool(task.name, task.func, task.description))
+        _auto_ref = _auto
+    except ImportError:
+        _auto_ref = None
+
     controller = CompanionController(agent, speak_replies=voice_output)
 
-    # ── Animation state ───────────────────────────────────────────────────────
-    anim = {
-        "phase": 0.0,
-        "state": "idle",        # idle | thinking | speaking | alert
-        "color": C["orb_idle"],
-        "items": [],
-        "unread": 0,
-        "active_tab": "chat",
+    # ── State ────────────────────────────────────────────────
+    st = {
+        "phase": 0.0, "state": "idle", "color": C["idle"],
+        "items": [], "panel_open": False, "unread": 0,
+        "active_tab": "chat", "model": getattr(agent.provider,"model",model),
     }
 
-    # ── Root window (orb) ─────────────────────────────────────────────────────
+    # ── Root (orb) ───────────────────────────────────────────
     root = tk.Tk()
     root.title("ByteFlow")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-transparentcolor", C["bg"])
-    root.configure(bg=C["bg"])
+    root.attributes("-transparentcolor", C["void"])
+    root.configure(bg=C["void"])
+    root.geometry(f"{ORB_S+20}x{ORB_S+20}+80+80")
 
-    S = ORB_SIZE + 20   # canvas size with padding for glow
-    root.geometry(f"{S}x{S}+80+80")
+    canv = tk.Canvas(root, width=ORB_S+20, height=ORB_S+20,
+                     bg=C["void"], highlightthickness=0)
+    canv.pack()
+    cx, cy = (ORB_S+20)//2, (ORB_S+20)//2
+    orb_r  = ORB_S//2 - 4
 
-    canvas = tk.Canvas(root, width=S, height=S, bg=C["bg"],
-                       highlightthickness=0, bd=0)
-    canvas.pack()
-    cx, cy = S // 2, S // 2
-    orb_r = ORB_SIZE // 2 - 4
+    # ── Fonts ────────────────────────────────────────────────
+    F_UI   = tkfont.Font(family="Segoe UI",   size=10)
+    F_BOLD = tkfont.Font(family="Segoe UI",   size=10, weight="bold")
+    F_SML  = tkfont.Font(family="Segoe UI",   size=9)
+    F_CODE = tkfont.Font(family="Consolas",   size=9)
+    F_TTL  = tkfont.Font(family="Segoe UI",   size=12, weight="bold")
+    F_TAB  = tkfont.Font(family="Segoe UI",   size=9,  weight="bold")
+    F_MONO = tkfont.Font(family="JetBrains Mono", size=9)
 
-    # ── Chat panel (Toplevel) ─────────────────────────────────────────────────
+    # ── Panel ────────────────────────────────────────────────
     panel = tk.Toplevel(root)
     panel.withdraw()
     panel.overrideredirect(True)
     panel.attributes("-topmost", True)
-    panel.configure(bg=C["panel_bg"])
+    panel.configure(bg=C["deep"])
     panel.geometry(f"{PANEL_W}x{PANEL_H}")
 
-    # Fonts
-    F_BODY  = tkfont.Font(family="Segoe UI", size=10)
-    F_BOLD  = tkfont.Font(family="Segoe UI", size=10, weight="bold")
-    F_SMALL = tkfont.Font(family="Segoe UI", size=9)
-    F_MONO  = tkfont.Font(family="Consolas",  size=9)
-    F_TITLE = tkfont.Font(family="Segoe UI",  size=12, weight="bold")
-    F_TAB   = tkfont.Font(family="Segoe UI",  size=9,  weight="bold")
+    # ── Panel header ─────────────────────────────────────────
+    hdr = tk.Frame(panel, bg="#04080f", height=50)
+    hdr.pack(fill="x"); hdr.pack_propagate(False)
 
-    # ── Panel header ──────────────────────────────────────────────────────────
-    header = tk.Frame(panel, bg="#0a0f1e", height=46)
-    header.pack(fill="x")
-    header.pack_propagate(False)
+    hc = tk.Canvas(hdr, width=30, height=30, bg="#04080f", highlightthickness=0)
+    hc.place(x=12, y=10)
+    hc.create_oval(3,3,27,27,fill=C["cyan"],outline="")
+    hc.create_oval(8,8,20,20,fill="#60d8d0",outline="")
+    hc.create_oval(11,10,17,15,fill="#ffffff",outline="")
 
-    # Orb mini icon in header
-    h_canvas = tk.Canvas(header, width=28, height=28, bg="#0a0f1e",
-                          highlightthickness=0)
-    h_canvas.place(x=12, y=9)
-    h_canvas.create_oval(4, 4, 24, 24, fill=C["orb_idle"], outline="")
-    h_canvas.create_oval(8, 8, 18, 18, fill="#7cb9ff", outline="")
-    h_canvas.create_oval(10, 9, 15, 14, fill="#ffffff", outline="")
+    tk.Label(hdr, text="ByteFlow", font=F_TTL,
+             bg="#04080f", fg=C["t1"]).place(x=48, y=14)
 
-    tk.Label(header, text="ByteFlow", font=F_TITLE,
-             bg="#0a0f1e", fg=C["text"]).place(x=46, y=12)
+    status_lbl = tk.Label(hdr, text="● ready", font=F_SML,
+                          bg="#04080f", fg=C["green"])
+    status_lbl.place(x=160, y=17)
 
-    status_lbl = tk.Label(header, text="● ready", font=F_SMALL,
-                           bg="#0a0f1e", fg=C["green"])
-    status_lbl.place(x=200, y=15)
+    model_badge = tk.Label(hdr, text=f"⚡ {st['model']}", font=F_SML,
+                           bg=C["ink"], fg=C["amber"],
+                           cursor="hand2", padx=6, pady=2)
+    model_badge.place(x=PANEL_W-120, y=14)
 
-    close_btn = tk.Label(header, text="✕", font=F_BOLD,
-                          bg="#0a0f1e", fg=C["text2"], cursor="hand2")
-    close_btn.place(x=PANEL_W - 28, y=13)
-    close_btn.bind("<Button-1>", lambda e: toggle_panel())
+    close_lbl = tk.Label(hdr, text="✕", font=F_BOLD,
+                         bg="#04080f", fg=C["t3"], cursor="hand2")
+    close_lbl.place(x=PANEL_W-22, y=16)
+    close_lbl.bind("<Button-1>", lambda e: toggle_panel())
 
-    # Separator
-    tk.Frame(panel, bg=C["panel_bdr"], height=1).pack(fill="x")
+    tk.Frame(panel, bg=C["border"], height=1).pack(fill="x")
 
-    # ── Tab bar ───────────────────────────────────────────────────────────────
-    tab_bar = tk.Frame(panel, bg="#0a0f1e", height=36)
-    tab_bar.pack(fill="x")
-    tab_bar.pack_propagate(False)
-
-    tab_labels = {}
-    TABS = [("💬 Chat", "chat"), ("🔔 Alerts", "alerts"),
-            ("⚡ Quick", "quick"), ("📊 Status", "status")]
+    # ── Tab bar ──────────────────────────────────────────────
+    tab_bar = tk.Frame(panel, bg=C["ink"], height=36)
+    tab_bar.pack(fill="x"); tab_bar.pack_propagate(False)
+    TABS = [("💬","chat"),("⚡","quick"),("🔔","alerts"),
+            ("⚙️","settings"),("📊","status")]
+    tab_lbls = {}
 
     def switch_tab(name):
-        anim["active_tab"] = name
-        for tname, lbl in tab_labels.items():
-            if tname == name:
-                lbl.configure(bg=C["panel_bg"], fg=C["accent"])
-            else:
-                lbl.configure(bg="#0a0f1e", fg=C["text2"])
-        # Show/hide frames — always fill both + expand so chat area grows
-        chat_frame.pack_forget()
-        alerts_frame.pack_forget()
-        quick_frame.pack_forget()
-        status_frame.pack_forget()
-        frames = {"chat": chat_frame, "alerts": alerts_frame,
-                  "quick": quick_frame, "status": status_frame}
-        frames[name].pack(fill="both", expand=True, side="top")
-        if name == "alerts":
-            refresh_alerts()
-        if name == "status":
-            refresh_status()
+        st["active_tab"] = name
+        for n, l in tab_lbls.items():
+            l.configure(bg=C["surface"] if n==name else C["ink"],
+                        fg=C["cyan"]    if n==name else C["t3"])
+        for f in [chat_f, quick_f, alerts_f, settings_f, status_f]:
+            f.pack_forget()
+        {"chat":chat_f,"quick":quick_f,"alerts":alerts_f,
+         "settings":settings_f,"status":status_f}[name].pack(fill="both",expand=True,side="top")
+        if name=="alerts": refresh_alerts()
+        if name=="status": refresh_status()
+        if name=="settings": refresh_settings()
 
-    for i, (label, name) in enumerate(TABS):
-        lbl = tk.Label(tab_bar, text=label, font=F_TAB,
-                        bg="#0a0f1e", fg=C["text2"],
-                        cursor="hand2", padx=8)
-        lbl.place(x=i * (PANEL_W // 4), y=0,
-                  width=PANEL_W // 4, height=36)
-        lbl.bind("<Button-1>", lambda e, n=name: switch_tab(n))
-        tab_labels[name] = lbl
+    for i,(icon,name) in enumerate(TABS):
+        l = tk.Label(tab_bar, text=icon, font=F_TAB,
+                     bg=C["ink"], fg=C["t3"], cursor="hand2",
+                     width=PANEL_W//(len(TABS)*8))
+        l.place(x=i*(PANEL_W//len(TABS)), y=0,
+                width=PANEL_W//len(TABS), height=36)
+        l.bind("<Button-1>", lambda e,n=name: switch_tab(n))
+        tab_lbls[name] = l
+    tk.Frame(panel, bg=C["border"], height=1).pack(fill="x")
 
-    tk.Frame(panel, bg=C["panel_bdr"], height=1).pack(fill="x")
+    def set_state(s):
+        st["state"] = s
+        st["color"] = {"idle":C["idle"],"think":C["think"],
+                       "speak":C["speak"],"alert":C["alert"],
+                       "listen":C["listen"]}.get(s, C["idle"])
+        status_lbl.configure(
+            text={"idle":"● ready","think":"● thinking…","speak":"● speaking",
+                  "alert":"● alert!","listen":"● listening"}.get(s,"● ready"),
+            fg=st["color"])
 
-    # ── CHAT frame ────────────────────────────────────────────────────────────
-    chat_frame = tk.Frame(panel, bg=C["panel_bg"])
+    # ════════════════════════════════════════════════════════
+    # CHAT FRAME
+    # ════════════════════════════════════════════════════════
+    chat_f = tk.Frame(panel, bg=C["deep"])
 
-    # KEY: pack bottom widgets FIRST so Tkinter reserves their space,
-    # then the message area expands to fill everything above them.
+    # INPUT — pack bottom first
+    in_sep = tk.Frame(chat_f, bg=C["border"], height=1)
+    in_sep.pack(side="bottom", fill="x")
+    in_area = tk.Frame(chat_f, bg=C["ink"], pady=8, padx=10)
+    in_area.pack(side="bottom", fill="x")
 
-    # 1. Separator at very bottom
-    input_sep = tk.Frame(chat_frame, bg=C["panel_bdr"], height=1)
-    input_sep.pack(side="bottom", fill="x")
+    # MSG area fills rest
+    msg_wrap = tk.Frame(chat_f, bg=C["deep"])
+    msg_wrap.pack(side="top", fill="both", expand=True)
 
-    # 2. Input area at bottom
-    input_area = tk.Frame(chat_frame, bg="#080c18", pady=8, padx=10)
-    input_area.pack(side="bottom", fill="x")
+    msg_sb = tk.Scrollbar(msg_wrap, bg=C["deep"], troughcolor=C["deep"])
+    msg_sb.pack(side="right", fill="y")
 
-    # 3. Message area fills remaining space
-    msg_frame = tk.Frame(chat_frame, bg=C["panel_bg"])
-    msg_frame.pack(side="top", fill="both", expand=True)
+    msg_txt = tk.Text(msg_wrap, bg=C["deep"], fg=C["t1"], font=F_UI,
+                      wrap="word", state="disabled", padx=12, pady=10,
+                      borderwidth=0, highlightthickness=0,
+                      yscrollcommand=msg_sb.set,
+                      selectbackground=C["rim"],
+                      insertbackground=C["cyan"])
+    msg_txt.pack(side="left", fill="both", expand=True)
+    msg_sb.config(command=msg_txt.yview)
 
-    msg_scroll = tk.Scrollbar(msg_frame, bg=C["panel_bg"],
-                               troughcolor=C["panel_bg"],
-                               activebackground=C["panel_bdr"])
-    msg_scroll.pack(side="right", fill="y")
+    msg_txt.tag_configure("you",   foreground=C["cyan"],  font=F_BOLD)
+    msg_txt.tag_configure("bf",    foreground=C["green"], font=F_BOLD)
+    msg_txt.tag_configure("sys",   foreground=C["amber"], font=F_BOLD)
+    msg_txt.tag_configure("err",   foreground=C["rose"],  font=F_BOLD)
+    msg_txt.tag_configure("ytxt",  foreground=C["t1"])
+    msg_txt.tag_configure("btxt",  foreground=C["t1"])
+    msg_txt.tag_configure("stxt",  foreground=C["t2"], font=F_SML)
+    msg_txt.tag_configure("etxt",  foreground=C["rose"])
+    msg_txt.tag_configure("code",  foreground="#a9d3df", font=F_CODE,
+                           background="#08101e")
 
-    msg_text = tk.Text(
-        msg_frame, bg=C["panel_bg"], fg=C["text"],
-        font=F_BODY, wrap="word", state="disabled",
-        padx=12, pady=10, borderwidth=0, highlightthickness=0,
-        yscrollcommand=msg_scroll.set, selectbackground=C["ring"],
-        insertbackground=C["accent"],
-    )
-    msg_text.pack(side="left", fill="both", expand=True)
-    msg_scroll.config(command=msg_text.yview)
-
-    # Message tags
-    msg_text.tag_configure("you_name",  foreground=C["accent"],  font=F_BOLD)
-    msg_text.tag_configure("bot_name",  foreground=C["green"],   font=F_BOLD)
-    msg_text.tag_configure("sys_name",  foreground=C["yellow"],  font=F_BOLD)
-    msg_text.tag_configure("err_name",  foreground=C["red"],     font=F_BOLD)
-    msg_text.tag_configure("you_text",  foreground=C["text"])
-    msg_text.tag_configure("bot_text",  foreground=C["text"])
-    msg_text.tag_configure("sys_text",  foreground=C["text2"],   font=F_SMALL)
-    msg_text.tag_configure("err_text",  foreground=C["red"])
-    msg_text.tag_configure("code_text", foreground="#a9d3df",    font=F_MONO,
-                            background="#0a1020")
-    msg_text.tag_configure("divider",   foreground=C["ring"])
-
-    def append_msg(sender, text, kind="bot"):
-        msg_text.configure(state="normal")
-        name_tag = {"you":"you_name","bot":"bot_name",
-                    "sys":"sys_name","err":"err_name"}.get(kind,"bot_name")
-        text_tag = {"you":"you_text","bot":"bot_text",
-                    "sys":"sys_text","err":"err_text"}.get(kind,"bot_text")
-
-        # Format code blocks
+    def append_msg(sender, text, kind="bf"):
+        msg_txt.configure(state="normal")
+        name_tag = {"you":"you","bf":"bf","sys":"sys","err":"err"}.get(kind,"bf")
+        text_tag = {"you":"ytxt","bf":"btxt","sys":"stxt","err":"etxt"}.get(kind,"btxt")
         if "```" in text:
             parts = text.split("```")
-            msg_text.insert("end", f"{sender}\n", name_tag)
-            for i, part in enumerate(parts):
-                if i % 2 == 1:  # inside code block
-                    msg_text.insert("end", part.lstrip("python\n").lstrip("bash\n"), "code_text")
-                else:
-                    if part.strip():
-                        msg_text.insert("end", part, text_tag)
+            msg_txt.insert("end", f"{sender}\n", name_tag)
+            for i,p in enumerate(parts):
+                if i%2==1:
+                    msg_txt.insert("end", p.lstrip("python\nbash\n"), "code")
+                elif p.strip():
+                    msg_txt.insert("end", p, text_tag)
         else:
-            msg_text.insert("end", f"{sender}\n", name_tag)
-            msg_text.insert("end", f"{text}\n", text_tag)
+            msg_txt.insert("end", f"{sender}\n", name_tag)
+            msg_txt.insert("end", f"{text}\n", text_tag)
+        msg_txt.insert("end", "\n")
+        msg_txt.configure(state="disabled")
+        msg_txt.see("end")
 
-        msg_text.insert("end", "\n")
-        msg_text.configure(state="disabled")
-        msg_text.see("end")
+    # Input widgets
+    ev = tk.StringVar()
+    entry = tk.Entry(in_area, textvariable=ev,
+                     bg=C["surface"], fg=C["t1"],
+                     insertbackground=C["cyan"], font=F_UI,
+                     relief="flat", highlightthickness=1,
+                     highlightcolor=C["cyan"],
+                     highlightbackground=C["border"])
+    entry.pack(fill="x", ipady=7, pady=(0,6))
 
-    entry_var = tk.StringVar()
-    entry = tk.Entry(
-        input_area, textvariable=entry_var,
-        bg="#111827", fg=C["text"], insertbackground=C["accent"],
-        font=F_BODY, relief="flat", bd=0,
-        highlightthickness=1, highlightcolor=C["accent"],
-        highlightbackground=C["panel_bdr"],
-    )
-    entry.pack(fill="x", ipady=7, padx=(0,0), pady=(0,6))
-
-    btn_row = tk.Frame(input_area, bg="#080c18")
+    btn_row = tk.Frame(in_area, bg=C["ink"])
     btn_row.pack(fill="x")
 
-    def _mk_btn(parent, text, cmd, accent=False):
-        bg = C["accent"] if accent else C["ring"]
-        fg = "#fff" if accent else C["text2"]
-        b = tk.Label(parent, text=text, font=F_SMALL, bg=bg, fg=fg,
-                      cursor="hand2", padx=10, pady=5, relief="flat")
+    def btn(parent, text, cmd, accent=False):
+        b = tk.Label(parent, text=text, font=F_SML, cursor="hand2",
+                     bg=C["cyan"] if accent else C["rim"],
+                     fg=C["void"] if accent else C["t2"],
+                     padx=10, pady=5)
         b.bind("<Button-1>", lambda e: cmd())
+        b.bind("<Enter>", lambda e,b=b: b.configure(bg=C["cyan"] if accent else C["border"]))
+        b.bind("<Leave>", lambda e,b=b: b.configure(bg=C["cyan"] if accent else C["rim"]))
         return b
 
-    def on_send(event=None):
-        msg = entry_var.get().strip()
-        if not msg:
+    def on_send(e=None):
+        msg = ev.get().strip()
+        if not msg: return
+        ev.set("")
+        # Check voice model switch command first
+        if handle_model_switch(msg):
             return
-        entry_var.set("")
         append_msg("You", msg, "you")
-        set_state("thinking")
+        set_state("think")
         controller.send(msg)
 
     def on_upload():
         from tkinter import filedialog
-        from .file_reading import read_file_text, FileReadError
         path = filedialog.askopenfilename(parent=panel)
-        if not path:
-            return
-        fname = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if not path: return
+        fname = Path(path).name
         try:
-            content = read_file_text(path)
+            content = Path(path).read_text(encoding="utf-8", errors="replace")
         except Exception as e:
-            append_msg("System", f"Could not read {fname}: {e}", "sys")
-            return
-        n_chunks = agent.ingest_document(content, source=fname)
-        append_msg("System", f"Indexed {fname} ({n_chunks} chunks)", "sys")
-        set_state("thinking")
-        controller.send(
-            f"I uploaded `{fname}` — {len(content)} chars, {n_chunks} chunks indexed. "
-            f"Preview:\n```\n{content[:300]}\n```"
-        )
+            append_msg("System", f"Could not read {fname}: {e}", "sys"); return
+        try:
+            n = agent.ingest_document(content, source=fname)
+            append_msg("System", f"Indexed {fname} ({n} chunks)", "sys")
+        except Exception:
+            append_msg("System", f"Loaded {fname}", "sys")
+        set_state("think")
+        controller.send(f"I uploaded `{fname}`. Preview:\n```\n{content[:300]}\n```")
 
-    send_btn   = _mk_btn(btn_row, "  Send ➤  ", on_send, accent=True)
-    upload_btn = _mk_btn(btn_row, "📎 File",    on_upload)
-    clear_btn  = _mk_btn(btn_row, "🗑 Clear",
-                          lambda: [msg_text.configure(state="normal"),
-                                   msg_text.delete("1.0","end"),
-                                   msg_text.configure(state="disabled")])
+    sb  = btn(btn_row, "  Send ➤  ", on_send, accent=True)
+    ub  = btn(btn_row, "📎 File",    on_upload)
+    clr = btn(btn_row, "🗑 Clear",
+              lambda: [msg_txt.configure(state="normal"),
+                       msg_txt.delete("1.0","end"),
+                       msg_txt.configure(state="disabled")])
+    mic_btn = btn(btn_row, "🎙 Voice",  lambda: toggle_mic())
 
-    send_btn.pack(side="right", padx=(4,0))
-    upload_btn.pack(side="right", padx=(4,0))
-    clear_btn.pack(side="right", padx=(4,0))
+    sb.pack(side="right", padx=(4,0))
+    ub.pack(side="right", padx=(4,0))
+    clr.pack(side="right", padx=(4,0))
+    mic_btn.pack(side="right", padx=(4,0))
     entry.bind("<Return>", on_send)
 
-    # ── ALERTS frame ──────────────────────────────────────────────────────────
-    alerts_frame = tk.Frame(panel, bg=C["panel_bg"])
+    # ════════════════════════════════════════════════════════
+    # QUICK ACTIONS FRAME
+    # ════════════════════════════════════════════════════════
+    quick_f = tk.Frame(panel, bg=C["deep"])
+    tk.Label(quick_f, text="Quick Actions", font=F_BOLD,
+             bg=C["deep"], fg=C["t1"]).pack(anchor="w", padx=14, pady=(12,6))
 
-    alerts_header = tk.Frame(alerts_frame, bg=C["panel_bg"])
-    alerts_header.pack(fill="x", padx=12, pady=(10,6))
-    tk.Label(alerts_header, text="System Alerts", font=F_BOLD,
-             bg=C["panel_bg"], fg=C["text"]).pack(side="left")
-    refresh_btn = tk.Label(alerts_header, text="↻ Refresh", font=F_SMALL,
-                            bg=C["panel_bg"], fg=C["accent"], cursor="hand2")
-    refresh_btn.pack(side="right")
-
-    alerts_text = tk.Text(
-        alerts_frame, bg=C["panel_bg"], fg=C["text"],
-        font=F_SMALL, wrap="word", state="disabled",
-        padx=12, pady=6, borderwidth=0, highlightthickness=0,
-    )
-    alerts_text.pack(fill="both", expand=True)
-    alerts_text.tag_configure("warn",  foreground=C["yellow"], font=F_BOLD)
-    alerts_text.tag_configure("err",   foreground=C["red"],    font=F_BOLD)
-    alerts_text.tag_configure("info",  foreground=C["accent"], font=F_BOLD)
-    alerts_text.tag_configure("body",  foreground=C["text2"])
-    alerts_text.tag_configure("time",  foreground=C["ring"])
-
-    def refresh_alerts():
-        try:
-            from byteflow.watcher import get_watcher
-            w = get_watcher()
-            alerts = w.get_alerts(limit=20)
-            alerts_text.configure(state="normal")
-            alerts_text.delete("1.0","end")
-            if not alerts:
-                alerts_text.insert("end", "✅  All systems good — no alerts\n", "info")
-            else:
-                for a in alerts:
-                    tag = {"warning":"warn","error":"err"}.get(a["level"],"info")
-                    alerts_text.insert("end", f"[{a['level'].upper()}] {a['title']}\n", tag)
-                    alerts_text.insert("end", f"{a['body']}\n", "body")
-                    alerts_text.insert("end", f"{a['ts'][:19]}\n\n", "time")
-            alerts_text.configure(state="disabled")
-        except Exception as e:
-            alerts_text.configure(state="normal")
-            alerts_text.delete("1.0","end")
-            alerts_text.insert("end", f"Could not load alerts: {e}", "body")
-            alerts_text.configure(state="disabled")
-
-    refresh_btn.bind("<Button-1>", lambda e: refresh_alerts())
-
-    # ── QUICK ACTIONS frame ───────────────────────────────────────────────────
-    quick_frame = tk.Frame(panel, bg=C["panel_bg"])
-
-    tk.Label(quick_frame, text="Quick Actions", font=F_BOLD,
-             bg=C["panel_bg"], fg=C["text"]).pack(anchor="w", padx=14, pady=(12,8))
-
-    QUICK_ACTIONS = [
+    QUICK = [
         ("💻 System Info",    "show system info"),
-        ("🌿 Git Status",     "show git status of current directory"),
-        ("⚙️ Processes",      "list running processes"),
+        ("🌿 Git Status",     "git status of current directory"),
+        ("⚙️  Processes",     "list running processes"),
         ("💾 Disk Usage",     "check disk space"),
         ("📋 Clipboard",      "read clipboard"),
-        ("⏰ Current Time",   "what time is it"),
+        ("🕐 Time",           "what time is it"),
         ("📚 KB Status",      "kb_status"),
-        ("🔔 Check Alerts",   "check_alerts"),
-        ("📊 List Workflows", "list_workflows"),
-        ("⚡ List Shortcuts", "list_shortcuts"),
+        ("🔔 Alerts",         "check_alerts"),
+        ("⚡ Shortcuts",      "list_shortcuts"),
         ("🔗 Integrations",   "integration_status"),
-        ("🕐 History Stats",  "history_stats"),
+        ("📊 Workflows",      "list_workflows"),
+        ("🧠 My Memories",    "history_stats"),
+        ("🤖 My Skills",      "What tools and skills do you have?"),
+        ("🔄 Switch q1",      "switch to q1"),
+        ("🔄 Switch llama3",  "switch to llama3"),
+        ("🔄 Switch my-buddy","switch to my-buddy"),
     ]
 
     def run_quick(cmd):
         switch_tab("chat")
+        if handle_model_switch(cmd):
+            return
         append_msg("You", cmd, "you")
-        set_state("thinking")
+        set_state("think")
         controller.send(cmd)
 
-    qa_scroll = tk.Frame(quick_frame, bg=C["panel_bg"])
-    qa_scroll.pack(fill="both", expand=True, padx=10, pady=(0,10))
+    qa_grid = tk.Frame(quick_f, bg=C["deep"])
+    qa_grid.pack(fill="both", expand=True, padx=10, pady=(0,10))
+    for i,(label,cmd) in enumerate(QUICK):
+        row, col = i//2, i%2
+        b = tk.Label(qa_grid, text=label, font=F_SML, bg=C["ink"],
+                     fg=C["t2"], cursor="hand2", anchor="w",
+                     padx=10, pady=7, relief="flat")
+        b.grid(row=row, column=col, padx=4, pady=3, sticky="ew")
+        b.bind("<Enter>",  lambda e,x=b: x.configure(bg=C["surface"], fg=C["cyan"]))
+        b.bind("<Leave>",  lambda e,x=b: x.configure(bg=C["ink"], fg=C["t2"]))
+        b.bind("<Button-1>", lambda e,c=cmd: run_quick(c))
+        qa_grid.columnconfigure(col, weight=1)
 
-    for i, (label, cmd) in enumerate(QUICK_ACTIONS):
-        row = i // 2
-        col = i % 2
-        btn = tk.Label(
-            qa_scroll, text=label, font=F_SMALL,
-            bg=C["ring"], fg=C["text"],
-            cursor="hand2", padx=8, pady=8,
-            anchor="w", relief="flat",
-        )
-        btn.grid(row=row, column=col, padx=4, pady=3,
-                 sticky="ew", ipadx=4)
-        btn.bind("<Enter>",  lambda e, b=btn: b.configure(bg=C["panel_bdr"], fg=C["accent"]))
-        btn.bind("<Leave>",  lambda e, b=btn: b.configure(bg=C["ring"], fg=C["text"]))
-        btn.bind("<Button-1>", lambda e, c=cmd: run_quick(c))
-        qa_scroll.columnconfigure(col, weight=1)
+    # Free-ask bar
+    tk.Frame(quick_f, bg=C["border"], height=1).pack(fill="x", padx=10, pady=6)
+    ask_row = tk.Frame(quick_f, bg=C["deep"])
+    ask_row.pack(fill="x", padx=10, pady=(0,10))
+    ask_ev = tk.StringVar()
+    ask_e  = tk.Entry(ask_row, textvariable=ask_ev, bg=C["surface"], fg=C["t1"],
+                      insertbackground=C["cyan"], font=F_UI, relief="flat",
+                      highlightthickness=1, highlightbackground=C["border"],
+                      highlightcolor=C["cyan"])
+    ask_e.pack(side="left", fill="x", expand=True, ipady=5)
+    ask_e.insert(0, "ask anything or type a model alias...")
+    ask_e.bind("<FocusIn>", lambda e: ask_e.delete(0,"end")
+               if ask_e.get().startswith("ask") else None)
+    ask_sb = tk.Label(ask_row, text=" Ask ➤ ", font=F_SML, bg=C["cyan"],
+                      fg=C["void"], cursor="hand2", padx=8, pady=5)
+    ask_sb.pack(side="right", padx=(6,0))
+    def ask_run(e=None):
+        q = ask_ev.get().strip()
+        if q and not q.startswith("ask"): ask_ev.set(""); run_quick(q)
+    ask_sb.bind("<Button-1>", ask_run)
+    ask_e.bind("<Return>", ask_run)
 
-    # Shortcut runner
-    tk.Frame(quick_frame, bg=C["panel_bdr"], height=1).pack(fill="x", padx=10, pady=6)
-    sc_row = tk.Frame(quick_frame, bg=C["panel_bg"])
-    sc_row.pack(fill="x", padx=10, pady=(0,10))
-    sc_entry = tk.Entry(sc_row, bg="#111827", fg=C["text"],
-                         insertbackground=C["accent"], font=F_BODY,
-                         relief="flat", highlightthickness=1,
-                         highlightbackground=C["panel_bdr"],
-                         highlightcolor=C["accent"])
-    sc_entry.pack(side="left", fill="x", expand=True, ipady=5)
-    sc_entry.insert(0, "ask anything...")
-    sc_entry.bind("<FocusIn>", lambda e: sc_entry.delete(0,"end") if sc_entry.get()=="ask anything..." else None)
-    sc_send = tk.Label(sc_row, text=" Ask ➤ ", font=F_SMALL,
-                        bg=C["accent"], fg="#fff", cursor="hand2", padx=8, pady=5)
-    sc_send.pack(side="right", padx=(6,0))
-    def sc_run(e=None):
-        q = sc_entry.get().strip()
-        if q and q != "ask anything...":
-            sc_entry.delete(0,"end")
-            run_quick(q)
-    sc_send.bind("<Button-1>", sc_run)
-    sc_entry.bind("<Return>", sc_run)
+    # ════════════════════════════════════════════════════════
+    # ALERTS FRAME
+    # ════════════════════════════════════════════════════════
+    alerts_f = tk.Frame(panel, bg=C["deep"])
+    ah = tk.Frame(alerts_f, bg=C["deep"])
+    ah.pack(fill="x", padx=12, pady=(10,6))
+    tk.Label(ah, text="System Alerts", font=F_BOLD,
+             bg=C["deep"], fg=C["t1"]).pack(side="left")
+    rb = tk.Label(ah, text="↻ Refresh", font=F_SML,
+                  bg=C["deep"], fg=C["cyan"], cursor="hand2")
+    rb.pack(side="right")
 
-    # ── STATUS frame ──────────────────────────────────────────────────────────
-    status_frame = tk.Frame(panel, bg=C["panel_bg"])
+    at = tk.Text(alerts_f, bg=C["deep"], fg=C["t1"], font=F_SML,
+                 wrap="word", state="disabled", padx=12, pady=6,
+                 borderwidth=0, highlightthickness=0)
+    at.pack(fill="both", expand=True)
+    at.tag_configure("warn", foreground=C["amber"], font=F_BOLD)
+    at.tag_configure("err",  foreground=C["rose"],  font=F_BOLD)
+    at.tag_configure("info", foreground=C["cyan"],  font=F_BOLD)
+    at.tag_configure("body", foreground=C["t2"])
+    at.tag_configure("time", foreground=C["t4"])
 
-    status_text = tk.Text(
-        status_frame, bg=C["panel_bg"], fg=C["text"],
-        font=F_SMALL, wrap="word", state="disabled",
-        padx=14, pady=12, borderwidth=0, highlightthickness=0,
-    )
-    status_text.pack(fill="both", expand=True)
-    status_text.tag_configure("head",  foreground=C["accent"], font=F_BOLD)
-    status_text.tag_configure("key",   foreground=C["green"])
-    status_text.tag_configure("val",   foreground=C["text"])
-    status_text.tag_configure("sep",   foreground=C["ring"])
+    def refresh_alerts():
+        try:
+            from byteflow.watcher import get_watcher
+            alerts = get_watcher().get_alerts(limit=20)
+            at.configure(state="normal"); at.delete("1.0","end")
+            if not alerts:
+                at.insert("end","✅  All systems look good\n","info")
+            else:
+                for a in alerts:
+                    tag = {"warning":"warn","error":"err"}.get(a["level"],"info")
+                    at.insert("end",f"[{a['level'].upper()}] {a['title']}\n",tag)
+                    at.insert("end",f"{a['body']}\n","body")
+                    at.insert("end",f"{a['ts'][:19]}\n\n","time")
+            at.configure(state="disabled")
+        except Exception as e:
+            at.configure(state="normal"); at.delete("1.0","end")
+            at.insert("end",f"Watcher unavailable: {e}","body")
+            at.configure(state="disabled")
+
+    rb.bind("<Button-1>", lambda e: refresh_alerts())
+
+    # ════════════════════════════════════════════════════════
+    # SETTINGS FRAME
+    # ════════════════════════════════════════════════════════
+    settings_f = tk.Frame(panel, bg=C["deep"])
+
+    sf_scroll = tk.Frame(settings_f, bg=C["deep"])
+    sf_scroll.pack(fill="both", expand=True, padx=14, pady=10)
+
+    def srow(parent, label, widget_fn):
+        row = tk.Frame(parent, bg=C["ink"], pady=1)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=label, font=F_SML, bg=C["ink"],
+                 fg=C["t2"], width=18, anchor="w").pack(side="left", padx=10, pady=8)
+        w = widget_fn(row)
+        if w: w.pack(side="right", padx=10, pady=6)
+        return row
+
+    # Section: Model
+    tk.Label(sf_scroll, text="🤖  AI MODEL", font=F_TAB,
+             bg=C["deep"], fg=C["cyan"]).pack(anchor="w", pady=(6,4))
+    model_sect = tk.Frame(sf_scroll, bg=C["ink"], bd=0,
+                          highlightthickness=1, highlightbackground=C["border"])
+    model_sect.pack(fill="x", pady=(0,10))
+
+    # Current model display
+    cur_model_lbl = tk.Label(model_sect, text=f"Current: {st['model']}",
+                             font=F_BOLD, bg=C["ink"], fg=C["amber"])
+    cur_model_lbl.pack(anchor="w", padx=12, pady=(10,4))
+
+    # Available models from Ollama
+    models_var = tk.StringVar(value=st["model"])
+    models_list_lbl = tk.Label(model_sect, text="Switch to:", font=F_SML,
+                                bg=C["ink"], fg=C["t3"])
+    models_list_lbl.pack(anchor="w", padx=12)
+
+    models_frame = tk.Frame(model_sect, bg=C["ink"])
+    models_frame.pack(fill="x", padx=12, pady=(4,10))
+
+    known_aliases = [
+        ("⚡ q1",       "q1",       "qwen2.5-coder:1.5b — fast code model"),
+        ("🦙 l3",       "llama3",   "Llama 3 — general purpose"),
+        ("🤝 mb",       "my-buddy", "My Buddy — your custom model"),
+        ("💨 m",        "mistral",  "Mistral — fast & efficient"),
+        ("💻 cl",       "codellama","CodeLlama — code specialist"),
+    ]
+
+    def do_switch_model(alias, name):
+        switch_model_to(alias)
+        append_msg("System", f"Switched to {name} (alias: {alias})", "sys")
+        switch_tab("chat")
+
+    for i,(label,alias,desc) in enumerate(known_aliases):
+        row = tk.Frame(models_frame, bg=C["surface"])
+        row.pack(fill="x", pady=2)
+        is_cur = alias == st["model"] or st["model"].startswith(alias.split(":")[0])
+        color = C["cyan"] if is_cur else C["t2"]
+        tk.Label(row, text=label, font=F_BOLD, bg=C["surface"],
+                 fg=color, width=8).pack(side="left", padx=8, pady=4)
+        tk.Label(row, text=desc, font=F_SML, bg=C["surface"],
+                 fg=C["t3"]).pack(side="left", padx=4)
+        sw = tk.Label(row, text="→ Use", font=F_SML, bg=C["rim"],
+                      fg=C["t2"], cursor="hand2", padx=8, pady=3)
+        sw.pack(side="right", padx=8)
+        sw.bind("<Button-1>", lambda e,a=alias,n=desc: do_switch_model(a,n))
+        sw.bind("<Enter>", lambda e,w=sw: w.configure(bg=C["cyan"],fg=C["void"]))
+        sw.bind("<Leave>", lambda e,w=sw: w.configure(bg=C["rim"],fg=C["t2"]))
+
+    # Custom model entry
+    tk.Label(model_sect, text="Custom model name / alias:",
+             font=F_SML, bg=C["ink"], fg=C["t3"]).pack(anchor="w", padx=12)
+    custom_row = tk.Frame(model_sect, bg=C["ink"])
+    custom_row.pack(fill="x", padx=12, pady=(4,10))
+    custom_ev = tk.StringVar()
+    custom_e = tk.Entry(custom_row, textvariable=custom_ev,
+                        bg=C["surface"], fg=C["t1"],
+                        insertbackground=C["cyan"], font=F_CODE,
+                        relief="flat", highlightthickness=1,
+                        highlightbackground=C["border"],
+                        highlightcolor=C["cyan"])
+    custom_e.pack(side="left", fill="x", expand=True, ipady=5)
+    custom_e.insert(0, "e.g. q1  or  qwen2.5-coder:1.5b")
+    custom_e.bind("<FocusIn>", lambda e: custom_e.delete(0,"end")
+                  if custom_e.get().startswith("e.g") else None)
+    def apply_custom(e=None):
+        v = custom_ev.get().strip()
+        if v and not v.startswith("e.g"): switch_model_to(v)
+    cok = tk.Label(custom_row, text=" Apply ", font=F_SML,
+                   bg=C["amber"], fg=C["void"], cursor="hand2", padx=8, pady=5)
+    cok.pack(side="right", padx=(6,0))
+    cok.bind("<Button-1>", apply_custom)
+    custom_e.bind("<Return>", apply_custom)
+
+    # Voice note
+    tk.Label(model_sect,
+             text="💡 Voice command: say  \"switch to q1\"  or  \"use buddy\"",
+             font=F_SML, bg=C["ink"], fg=C["t4"],
+             wraplength=350, justify="left").pack(anchor="w", padx=12, pady=(0,10))
+
+    # Section: Voice
+    tk.Label(sf_scroll, text="🎙️  VOICE", font=F_TAB,
+             bg=C["deep"], fg=C["cyan"]).pack(anchor="w", pady=(6,4))
+    voice_sect = tk.Frame(sf_scroll, bg=C["ink"], bd=0,
+                           highlightthickness=1, highlightbackground=C["border"])
+    voice_sect.pack(fill="x", pady=(0,10))
+
+    voice_enabled_var = tk.BooleanVar(value=True)
+    def make_toggle(parent, var):
+        f = tk.Frame(parent, bg=C["ink"])
+        def toggle():
+            var.set(not var.get())
+            on.configure(bg=C["cyan"] if var.get() else C["rim"],
+                         fg=C["void"] if var.get() else C["t3"])
+        on = tk.Label(f, text=" ON ", font=F_SML, cursor="hand2",
+                      bg=C["cyan"] if var.get() else C["rim"],
+                      fg=C["void"] if var.get() else C["t3"],
+                      padx=6, pady=3)
+        on.pack()
+        on.bind("<Button-1>", lambda e: toggle())
+        return f
+
+    srow(voice_sect, "Voice output (TTS)", lambda p: make_toggle(p, voice_enabled_var))
+    srow(voice_sect, "Wake word", lambda p: tk.Label(p,text="\"hey byteflow\"",
+         font=F_CODE, bg=C["ink"], fg=C["t2"]))
+
+    def refresh_settings():
+        cur_model_lbl.configure(text=f"Current: {st['model']}")
+
+    # ════════════════════════════════════════════════════════
+    # STATUS FRAME
+    # ════════════════════════════════════════════════════════
+    status_f = tk.Frame(panel, bg=C["deep"])
+    st_txt = tk.Text(status_f, bg=C["deep"], fg=C["t1"], font=F_SML,
+                     wrap="word", state="disabled", padx=14, pady=12,
+                     borderwidth=0, highlightthickness=0)
+    st_txt.pack(fill="both", expand=True)
+    st_txt.tag_configure("head", foreground=C["cyan"],  font=F_BOLD)
+    st_txt.tag_configure("key",  foreground=C["green"])
+    st_txt.tag_configure("val",  foreground=C["t1"])
+    st_txt.tag_configure("sep",  foreground=C["t4"])
 
     def refresh_status():
-        status_text.configure(state="normal")
-        status_text.delete("1.0","end")
+        st_txt.configure(state="normal"); st_txt.delete("1.0","end")
+        def sec(t):
+            st_txt.insert("end", f"\n{t}\n", "head")
+            st_txt.insert("end", "─"*38+"\n", "sep")
+        def kv(k,v):
+            st_txt.insert("end", f"  {k:<20}", "key")
+            st_txt.insert("end", f"{v}\n", "val")
 
-        def sec(title):
-            status_text.insert("end", f"\n{title}\n", "head")
-            status_text.insert("end", "─" * 36 + "\n", "sep")
-
-        def kv(k, v):
-            status_text.insert("end", f"  {k:<18}", "key")
-            status_text.insert("end", f"{v}\n", "val")
-
-        import platform, sys, os, shutil
+        import platform, sys, shutil
         sec("⚙️  System")
-        kv("OS",      f"{platform.system()} {platform.release()}")
-        kv("Python",  sys.version.split()[0])
-        kv("Host",    platform.node())
-
+        kv("OS", f"{platform.system()} {platform.release()}")
+        kv("Python", sys.version.split()[0])
         try:
             du = shutil.disk_usage("/")
-            kv("Disk",  f"{du.used/1e9:.1f} / {du.total/1e9:.1f} GB ({du.used/du.total*100:.0f}%)")
-        except Exception:
-            pass
-
+            kv("Disk", f"{du.used/1e9:.1f}/{du.total/1e9:.1f}GB ({du.used/du.total*100:.0f}%)")
+        except Exception: pass
         try:
             import psutil
             mem = psutil.virtual_memory()
-            kv("Memory", f"{mem.used/1e9:.1f} / {mem.total/1e9:.1f} GB ({mem.percent:.0f}%)")
-            kv("CPU",    f"{psutil.cpu_percent(interval=0.5):.0f}%")
+            kv("Memory", f"{mem.used/1e9:.1f}/{mem.total/1e9:.1f}GB ({mem.percent:.0f}%)")
+            kv("CPU", f"{psutil.cpu_percent(interval=0.3):.0f}%")
         except ImportError:
-            kv("Memory", "install psutil for details")
+            kv("Memory", "pip install psutil for details")
 
         sec("🤖  ByteFlow")
+        kv("Model", st["model"])
         try:
-            from byteflow.knowledge_base import get_kb
-            kb = get_kb()
-            s = kb.stats()
-            kv("KB sources",   s["total_sources"])
-            kv("KB chunks",    s["total_chunks"])
-        except Exception:
-            pass
-
-        try:
-            from byteflow.chat_history import get_history
-            h = get_history()
-            s = h.stats()
-            kv("Sessions",     s["total_sessions"])
-            kv("Messages",     s["total_messages"])
-        except Exception:
-            pass
-
-        try:
-            from byteflow.workflows import get_workflow_engine
-            eng = get_workflow_engine()
-            s = eng.stats()
-            kv("Workflows",    f"{s['enabled']} active / {s['total']} total")
-        except Exception:
-            pass
-
-        try:
-            from byteflow.watcher import get_watcher
-            w = get_watcher()
-            kv("Alerts",       f"{w.unread_count()} unread")
-        except Exception:
-            pass
-
-        try:
-            from byteflow.integrations import get_integrations
-            ig = get_integrations()
-            st = ig.status()
-            active = [k for k,v in st.items() if v.get("configured")]
-            kv("Integrations", ", ".join(active) if active else "none configured")
-        except Exception:
-            pass
-
+            from byteflow.model_registry import get_model_info
+            info = get_model_info(st["model"])
+            kv("Model label", info.get("label","?"))
+            kv("Best for", ", ".join(info.get("best_for",[])))
+        except Exception: pass
         try:
             from byteflow_automator import Automator
             auto = Automator()
-            kv("Auto tasks",   len(auto.registry))
-        except Exception:
-            pass
+            kv("Auto tasks", len(auto.registry))
+            cats = list(set(t.category for t in auto.registry.all()))
+            kv("Categories", ", ".join(cats))
+        except Exception: pass
+        try:
+            from byteflow.knowledge_base import get_kb
+            kb = get_kb(); s = kb.stats()
+            kv("KB sources", s["total_sources"])
+            kv("KB chunks", s["total_chunks"])
+        except Exception: pass
+        try:
+            from byteflow.chat_history import get_history
+            h = get_history(); s = h.stats()
+            kv("Sessions", s["total_sessions"])
+            kv("Messages", s["total_messages"])
+        except Exception: pass
+        try:
+            from byteflow.watcher import get_watcher
+            kv("Alerts", f"{get_watcher().unread_count()} unread")
+        except Exception: pass
 
-        status_text.configure(state="disabled")
+        sec("🔑  Model Aliases")
+        from byteflow.model_registry import ALIASES
+        for alias, full in list(ALIASES.items())[:12]:
+            kv(f"  {alias}", full)
 
-    # Show chat by default
-    chat_frame.pack(fill="both", expand=True)
+        st_txt.configure(state="disabled")
+
+    # ── Init first tab ───────────────────────────────────────
+    chat_f.pack(fill="both", expand=True, side="top")
     switch_tab("chat")
 
-    # ── Orb animation ─────────────────────────────────────────────────────────
-    def set_state(state):
-        anim["state"] = state
-        anim["color"] = {
-            "idle":     C["orb_idle"],
-            "thinking": C["orb_think"],
-            "speaking": C["orb_speak"],
-            "alert":    C["orb_alert"],
-        }.get(state, C["orb_idle"])
-        status_lbl.configure(
-            text={"idle":"● ready","thinking":"● thinking…",
-                  "speaking":"● speaking","alert":"● alert!"}.get(state,"● ready"),
-            fg=anim["color"]
-        )
+    # ════════════════════════════════════════════════════════
+    # MODEL SWITCHING — core function
+    # ════════════════════════════════════════════════════════
+    def switch_model_to(alias_or_name: str) -> bool:
+        from byteflow.model_registry import resolve_model, get_model_info
+        full = resolve_model(alias_or_name)
+        try:
+            agent.provider.switch_model(full)
+            st["model"] = full
+            info = get_model_info(full)
+            label = info.get("label", full)
+            model_badge.configure(text=f"⚡ {full}")
+            cur_model_lbl.configure(text=f"Current: {full}")
+            append_msg("System",
+                f"✅ Model switched to {label} ({full})\n"
+                f"Alias: {info.get('alias','?')} | Best for: {', '.join(info.get('best_for',[]))}",
+                "sys")
+            controller.speak(f"Switched to {label}")
+            return True
+        except Exception as e:
+            append_msg("System", f"⚠️ Could not switch model: {e}", "err")
+            return False
 
-    def redraw_orb():
-        # Remove old items
-        for item in anim["items"]:
+    def handle_model_switch(text: str) -> bool:
+        """
+        Detect voice/text model switch commands.
+        Returns True if a switch was handled.
+        Examples:
+          "switch to q1"  "use buddy"  "switch model llama3"
+          "q1"  "l3"  "mb"  (just the alias alone)
+        """
+        from byteflow.model_registry import ALIASES, resolve_model
+        low = text.strip().lower().replace("-","").replace(" ","")
+
+        # Pattern: "switchtoX", "useX", "switchmodelX", "changetoX"
+        for prefix in ["switchto","useto","use","switchmodel","changeto","change","model"]:
+            if low.startswith(prefix):
+                candidate = low[len(prefix):].strip()
+                full = resolve_model(candidate)
+                if full != candidate or candidate in ALIASES.values():
+                    switch_model_to(candidate)
+                    return True
+
+        # Pattern: bare alias (e.g. "q1", "mb", "l3")
+        bare = low.strip()
+        if bare in ALIASES:
+            switch_model_to(bare)
+            return True
+
+        return False
+
+    # ════════════════════════════════════════════════════════
+    # VOICE MIC
+    # ════════════════════════════════════════════════════════
+    _mic_active = [False]
+    _mic_rec    = [None]
+
+    def toggle_mic():
+        try:
+            import speech_recognition as sr
+        except ImportError:
+            append_msg("System",
+                "Install SpeechRecognition: pip install SpeechRecognition pyaudio", "err")
+            return
+
+        if _mic_active[0]:
+            _mic_active[0] = False
+            mic_btn.configure(bg=C["rim"], fg=C["t2"], text="🎙 Voice")
+            set_state("idle")
+            return
+
+        _mic_active[0] = True
+        mic_btn.configure(bg=C["rose"], fg=C["void"], text="🔴 Stop")
+        set_state("listen")
+
+        def listen_thread():
+            recog = sr.Recognizer()
             try:
-                canvas.delete(item)
-            except Exception:
-                pass
-        anim["items"] = _draw_orb(
-            canvas, cx, cy, orb_r,
-            anim["color"], anim["color"],
-            anim["phase"], anim["state"]
-        )
+                with sr.Microphone() as src:
+                    recog.adjust_for_ambient_noise(src, duration=0.5)
+                    audio = recog.listen(src, timeout=8, phrase_time_limit=12)
+                text = recog.recognize_google(audio)
+                root.after(0, lambda: _on_voice_result(text))
+            except sr.WaitTimeoutError:
+                root.after(0, lambda: _on_voice_done("No speech detected"))
+            except sr.UnknownValueError:
+                root.after(0, lambda: _on_voice_done("Could not understand"))
+            except Exception as e:
+                root.after(0, lambda: _on_voice_done(f"Mic error: {e}"))
+
+        threading.Thread(target=listen_thread, daemon=True).start()
+
+    def _on_voice_result(text):
+        _mic_active[0] = False
+        mic_btn.configure(bg=C["rim"], fg=C["t2"], text="🎙 Voice")
+        set_state("idle")
+        # Show what was heard
+        append_msg("🎙 You", text, "you")
+        # Check for model switch first
+        if handle_model_switch(text):
+            return
+        set_state("think")
+        controller.send(text)
+
+    def _on_voice_done(msg):
+        _mic_active[0] = False
+        mic_btn.configure(bg=C["rim"], fg=C["t2"], text="🎙 Voice")
+        set_state("idle")
+        append_msg("System", msg, "sys")
+
+    # ════════════════════════════════════════════════════════
+    # ORB ANIMATION
+    # ════════════════════════════════════════════════════════
+    def redraw():
+        for it in st["items"]:
+            try: canv.delete(it)
+            except Exception: pass
+        st["items"] = draw_orb(canv, cx, cy, orb_r,
+                               st["color"], st["phase"], st["state"])
 
     def animate():
-        speed = {"idle": 0.008, "thinking": 0.025,
-                 "speaking": 0.018, "alert": 0.030}.get(anim["state"], 0.008)
-        anim["phase"] = (anim["phase"] + speed) % 1.0
-        redraw_orb()
-        root.after(40, animate)  # ~25 fps
+        spd = {"idle":0.008,"think":0.028,"speak":0.018,
+               "alert":0.035,"listen":0.022}.get(st["state"],0.008)
+        st["phase"] = (st["phase"] + spd) % 1.0
+        redraw()
+        root.after(40, animate)
 
     animate()
 
-    # ── Panel visibility ──────────────────────────────────────────────────────
-    panel_visible = {"v": False}
-
-    def position_panel():
-        rx = root.winfo_x()
-        ry = root.winfo_y()
+    # ════════════════════════════════════════════════════════
+    # PANEL SHOW / HIDE
+    # ════════════════════════════════════════════════════════
+    def pos_panel():
+        rx, ry = root.winfo_x(), root.winfo_y()
         sw = root.winfo_screenwidth()
-        # Open to the right, or left if near screen edge
-        if rx + S + PANEL_W + 10 < sw:
-            px = rx + S + 6
-        else:
-            px = rx - PANEL_W - 6
-        py = max(0, ry - (PANEL_H - S) // 2)
+        px = rx + ORB_S+26 if rx+ORB_S+PANEL_W+30 < sw else rx-PANEL_W-6
+        py = max(0, ry-(PANEL_H-ORB_S)//2)
         panel.geometry(f"{PANEL_W}x{PANEL_H}+{px}+{py}")
 
-    def toggle_panel(event=None):
-        if panel_visible["v"]:
-            panel.withdraw()
-            panel_visible["v"] = False
+    def toggle_panel(e=None):
+        if st["panel_open"]:
+            panel.withdraw(); st["panel_open"] = False
         else:
-            position_panel()
-            panel.deiconify()
-            panel_visible["v"] = True
-            anim["unread"] = 0
+            pos_panel(); panel.deiconify()
+            st["panel_open"] = True; st["unread"] = 0
             entry.focus_set()
 
-    # ── Drag ─────────────────────────────────────────────────────────────────
-    drag = {"x": 0, "y": 0, "moved": False}
-
-    def on_press(e):
-        drag["x"] = e.x
-        drag["y"] = e.y
-        drag["moved"] = False
-
+    # ════════════════════════════════════════════════════════
+    # DRAG
+    # ════════════════════════════════════════════════════════
+    drag = {"x":0,"y":0,"moved":False}
+    def on_press(e): drag["x"]=e.x; drag["y"]=e.y; drag["moved"]=False
     def on_drag(e):
-        dx = abs(e.x - drag["x"])
-        dy = abs(e.y - drag["y"])
-        if dx > 3 or dy > 3:
-            drag["moved"] = True
-        nx = root.winfo_x() + (e.x - drag["x"])
-        ny = root.winfo_y() + (e.y - drag["y"])
-        root.geometry(f"+{nx}+{ny}")
-        if panel_visible["v"]:
-            position_panel()
-
+        if abs(e.x-drag["x"])>3 or abs(e.y-drag["y"])>3: drag["moved"]=True
+        root.geometry(f"+{root.winfo_x()+(e.x-drag['x'])}+{root.winfo_y()+(e.y-drag['y'])}")
+        if st["panel_open"]: pos_panel()
     def on_release(e):
-        if not drag["moved"]:
-            toggle_panel()
+        if not drag["moved"]: toggle_panel()
 
-    canvas.bind("<Button-1>",       on_press)
-    canvas.bind("<B1-Motion>",      on_drag)
-    canvas.bind("<ButtonRelease-1>",on_release)
-    canvas.bind("<Button-3>",       lambda e: root.destroy())
+    canv.bind("<Button-1>",        on_press)
+    canv.bind("<B1-Motion>",       on_drag)
+    canv.bind("<ButtonRelease-1>", on_release)
+    canv.bind("<Button-3>",        lambda e: root.destroy())
 
-    # Tooltip on hover
-    tip_lbl = tk.Label(root, text="ByteFlow — click to open",
-                        font=F_SMALL, bg="#0d1220", fg=C["text2"],
-                        padx=6, pady=3, relief="flat")
-
+    # Tooltip
+    tip = tk.Label(root, text="ByteFlow — click to open",
+                   font=F_SML, bg=C["ink"], fg=C["t3"], padx=6, pady=3)
     def show_tip(e):
-        tip_lbl.place(x=S + 4, y=cy - 10)
-        root.after(2000, lambda: tip_lbl.place_forget())
+        tip.place(x=ORB_S+26, y=cy-10)
+        root.after(2000, tip.place_forget)
+    canv.bind("<Enter>", show_tip)
 
-    canvas.bind("<Enter>", show_tip)
-
-    # ── Poll agent replies ─────────────────────────────────────────────────────
+    # ════════════════════════════════════════════════════════
+    # POLL REPLIES
+    # ════════════════════════════════════════════════════════
     def poll():
         reply = controller.poll_reply()
-        if reply is not None:
-            append_msg("ByteFlow", reply, "bot")
+        if reply:
+            append_msg("ByteFlow", reply, "bf")
             controller.speak(controller.speech_friendly(reply))
-            if panel_visible["v"]:
-                set_state("idle")
+            if st["panel_open"]: set_state("idle")
             else:
-                anim["unread"] += 1
+                st["unread"] += 1
                 set_state("alert")
         root.after(200, poll)
 
     poll()
 
-    # Welcome message
+    # Welcome
     append_msg("ByteFlow",
-               "Hello! I'm your ByteFlow companion.\n"
-               "I can help with files, code, automation, alerts, and more.\n"
-               "Use the Quick tab for one-tap actions, or just ask me anything.",
-               "bot")
+        f"Hello! Running on {st['model']}.\n"
+        f"I have access to all automation tools, memory, KB, and more.\n"
+        f"Say or type a model alias to switch: q1=qwen-coder, l3=llama3, mb=my-buddy\n"
+        f"Voice: click 🎙 Voice or say 'hey byteflow' to activate.",
+        "bf")
 
     root.mainloop()
 
 
 if __name__ == "__main__":
-    run_companion()
+    import argparse
+    p = argparse.ArgumentParser(description="ByteFlow Companion v3")
+    p.add_argument("--model", default="llama3",
+                   help="Model name or alias (q1, l3, mb, mistral...)")
+    p.add_argument("--voice-output", action="store_true")
+    p.add_argument("--voice-input",  action="store_true")
+    p.add_argument("--no-tools",     action="store_true")
+    a = p.parse_args()
+    run_companion(model=a.model,
+                  voice_output=a.voice_output,
+                  voice_input=a.voice_input,
+                  enable_desktop_tools=not a.no_tools)
