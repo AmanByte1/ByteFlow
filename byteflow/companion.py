@@ -211,7 +211,8 @@ def draw_orb(canvas, cx, cy, r, color, phase, state):
 # MAIN COMPANION
 # ══════════════════════════════════════════════════════════
 def run_companion(agent=None, model="llama3", voice_output=False,
-                  voice_input=False, enable_desktop_tools=True):
+                  voice_input=False, conversation_mode=False,
+                  enable_desktop_tools=True):
 
     import tkinter as tk
     from tkinter import font as tkfont

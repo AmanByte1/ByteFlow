@@ -574,7 +574,6 @@ def companion(model, memory_path, no_desktop_tools, voice_input, voice_output, v
         agent=agent,
         voice_input=voice_input or voice,
         voice_output=voice_output or voice,
-        conversation_mode=conversation_mode,
     )
 
 
