@@ -444,9 +444,71 @@ def run_companion(agent=None, model="llama3", voice_output=False,
         # Check voice model switch command first
         if handle_model_switch(msg):
             return
+        # Direct tool execution — bypass LLM for known tool names
+        if _try_direct_tool(msg):
+            return
         append_msg("You", msg, "you")
         set_state("think")
         controller.send(msg)
+
+    def _try_direct_tool(msg: str) -> bool:
+        """
+        If the message is a known tool name (like check_alerts, system_info)
+        or a direct command, run it immediately without going through the LLM.
+        Returns True if handled.
+        """
+        # Map of command patterns → actual calls
+        DIRECT = {
+            # Automator tool names
+            "check_alerts":       lambda: _run_tool("check_alerts"),
+            "system_info":        lambda: _run_tool("system_info"),
+            "list_shortcuts":     lambda: _run_tool("list_shortcuts"),
+            "list_workflows":     lambda: _run_tool("list_workflows"),
+            "history_stats":      lambda: _run_tool("history_stats"),
+            "integration_status": lambda: _run_tool("integration_status"),
+            "kb_status":          lambda: _run_tool("kb_status"),
+            "kb status":          lambda: _run_tool("kb_status"),
+            "current_time":       lambda: _run_tool("current_time"),
+            "list_processes":     lambda: _run_tool("list_processes"),
+            "pip_list":           lambda: _run_tool("pip_list"),
+            "docker_ps":          lambda: _run_tool("docker_ps"),
+            "git_status":         lambda: _run_tool("git_status"),
+            # Natural language shortcuts
+            "check disk":         lambda: _run_tool("system_info"),
+            "disk space":         lambda: _run_tool("system_info"),
+            "check disk space":   lambda: _run_tool("system_info"),
+            "show system info":   lambda: _run_tool("system_info"),
+            "system info":        lambda: _run_tool("system_info"),
+            "what time":          lambda: _run_tool("current_time"),
+            "what time is it":    lambda: _run_tool("current_time"),
+            "show alerts":        lambda: _run_tool("check_alerts"),
+            "show shortcuts":     lambda: _run_tool("list_shortcuts"),
+        }
+        key = msg.strip().lower()
+        if key in DIRECT:
+            append_msg("You", msg, "you")
+            set_state("think")
+            threading.Thread(target=lambda: _exec_direct(DIRECT[key]), daemon=True).start()
+            return True
+        return False
+
+    def _run_tool(tool_name: str):
+        """Run an automator task directly."""
+        try:
+            from byteflow_automator import Automator
+            auto = Automator()
+            result = auto.run_task(tool_name)
+            return str(result)
+        except Exception as e:
+            # Fall back to agent
+            return controller._fmt(controller.agent.run(tool_name))
+
+    def _exec_direct(fn):
+        try:
+            result = fn()
+        except Exception as e:
+            result = f"Error: {e}"
+        controller.replies.put(str(result))
 
     def on_upload():
         from tkinter import filedialog
@@ -508,6 +570,8 @@ def run_companion(agent=None, model="llama3", voice_output=False,
     def run_quick(cmd):
         switch_tab("chat")
         if handle_model_switch(cmd):
+            return
+        if _try_direct_tool(cmd):
             return
         append_msg("You", cmd, "you")
         set_state("think")
@@ -895,10 +959,10 @@ def run_companion(agent=None, model="llama3", voice_output=False,
         _mic_active[0] = False
         mic_btn.configure(bg=C["rim"], fg=C["t2"], text="🎙 Voice")
         set_state("idle")
-        # Show what was heard
         append_msg("🎙 You", text, "you")
-        # Check for model switch first
         if handle_model_switch(text):
+            return
+        if _try_direct_tool(text):
             return
         set_state("think")
         controller.send(text)

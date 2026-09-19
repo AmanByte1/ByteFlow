@@ -528,10 +528,44 @@ def companion(model, memory_path, no_desktop_tools, voice_input, voice_output, v
     if memory_path:
         _ensure_memory_dir(memory_path)
 
+    # ── Resolve model alias (q1, l3, mb, etc.) ─────────────────────────────
+    try:
+        from byteflow.model_registry import resolve_model, get_model_info
+        resolved = resolve_model(model)
+        if resolved != model:
+            click.echo(f"[model] alias '{model}' → '{resolved}'")
+            model = resolved
+        info = get_model_info(model)
+        click.echo(f"[model] {info.get('emoji','🤖')} {info.get('label', model)}")
+    except ImportError:
+        pass
+
     agent = Agent(provider=OllamaProvider(model=model), memory_path=memory_path)
     register_builtin_tools(agent)
     if not no_desktop_tools:
         register_desktop_tools(agent)
+
+    # ── Wire all automator tasks ────────────────────────────────────────────
+    try:
+        from byteflow_automator import Automator
+        from byteflow.tools import Tool
+        auto = Automator()
+        for task in auto.registry.all():
+            if task.safe:
+                agent.register_tool(Tool(task.name, task.func, task.description))
+        click.echo(f"[automator] {len(auto.registry)} tasks loaded")
+    except ImportError:
+        pass
+
+    # ── Wire KB context ────────────────────────────────────────────────────
+    try:
+        from byteflow.knowledge_base import get_kb
+        kb = get_kb()
+        if kb._chunks:
+            click.echo(f"[kb] {kb.stats()['total_chunks']} chunks available")
+    except Exception:
+        pass
+
     if not no_extensions or extension_path:
         _load_extensions(agent, skip_default=no_extensions, extra_paths=extension_path)
 
