@@ -82,6 +82,14 @@ DEFAULTS: dict[str, Any] = {
     # Privacy
     "analytics_enabled": False,
     "crash_reports": False,
+
+    # Lead Generation
+    "lead_generation_enabled": True,
+    "lead_model": "phi4-mini",
+    "lead_crawl_enabled": True,
+    "lead_min_confidence": 0.6,
+    "lead_target_services": ["website_creation", "seo_optimization", "whatsapp_bot"],
+    "lead_storage_path": "leads_database.json",
 }
 
 
