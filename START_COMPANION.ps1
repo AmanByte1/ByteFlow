@@ -1,42 +1,59 @@
-# ByteFlow Companion Launcher
-$Host.UI.RawUI.WindowTitle = "ByteFlow Companion"
-Set-Location $PSScriptRoot
-$env:PYTHONPATH = $PSScriptRoot
+# ByteFlow Web Companion - PowerShell Startup Script
+# Run with: powershell -ExecutionPolicy Bypass -File START_COMPANION.ps1
 
-Write-Host ""
-Write-Host "  ==========================================" -ForegroundColor Cyan
-Write-Host "   ByteFlow Companion v3" -ForegroundColor Cyan
-Write-Host "  ==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Host "`n" -ForegroundColor White
+Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║                   ByteFlow Companion                          ║" -ForegroundColor Cyan
+Write-Host "║         Intelligent Data Extraction & Lead Generation         ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "`n"
 
-# Find best model
-$models = (ollama list 2>$null) -split "`n" |
-    Where-Object { $_ -notmatch "NAME|^$" } |
-    ForEach-Object { ($_ -split "\s+")[0] -replace ":latest","" } |
-    Where-Object { $_ }
-
-$preferred = @("qwen2.5-coder","llama3","my-buddy","mistral","phi")
-$model = $null
-foreach ($p in $preferred) {
-    if ($models | Where-Object { $_ -like "$p*" }) { $model = $p; break }
+# Check Python
+try {
+    $pythonVersion = python --version 2>&1
+    Write-Host "✅ Python found: $pythonVersion" -ForegroundColor Green
+} catch {
+    Write-Host "❌ Python is not installed or not in PATH" -ForegroundColor Red
+    Write-Host "Please install Python 3.8+ from https://www.python.org" -ForegroundColor Yellow
+    Read-Host "Press Enter to exit"
+    exit 1
 }
-if (-not $model -and $models) { $model = $models[0] }
-if (-not $model) { $model = "llama3" }
 
-Write-Host "  Model : $model" -ForegroundColor Green
-Write-Host ""
-Write-Host "  Aliases you can say or type:" -ForegroundColor Gray
-Write-Host "    q1  = qwen2.5-coder:1.5b" -ForegroundColor Yellow
-Write-Host "    l3  = llama3" -ForegroundColor Yellow
-Write-Host "    mb  = my-buddy" -ForegroundColor Yellow
-Write-Host "    m   = mistral" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "  Starting Ollama..." -ForegroundColor Gray
-Start-Process "ollama" -ArgumentList "serve" -WindowStyle Minimized -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
+Write-Host "`n"
 
-Write-Host "  Launching companion orb..." -ForegroundColor Cyan
-Write-Host "  Right-click the orb to quit." -ForegroundColor Gray
-Write-Host ""
+# Create virtual environment if needed
+if (-not (Test-Path "venv")) {
+    Write-Host "📦 Creating virtual environment..." -ForegroundColor Yellow
+    python -m venv venv
+    Write-Host "✅ Virtual environment created" -ForegroundColor Green
+    Write-Host "`n"
+}
 
-python byteflow/companion.py --model $model
+# Activate venv
+Write-Host "🔌 Activating virtual environment..." -ForegroundColor Yellow
+& ".\venv\Scripts\Activate.ps1"
+
+# Install requirements
+Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
+pip install -r requirements.txt --quiet 2>&1 | Out-Null
+Write-Host "✅ Dependencies installed" -ForegroundColor Green
+Write-Host "`n"
+
+# Start server
+Write-Host "🚀 Starting ByteFlow Companion Server..." -ForegroundColor Green
+Write-Host "`n"
+Write-Host "📍 Open your browser and go to: " -NoNewline
+Write-Host "http://localhost:5000" -ForegroundColor Cyan
+Write-Host "`n"
+Write-Host "Features:" -ForegroundColor Yellow
+Write-Host "  🎯 Lead Generator    - Find local businesses needing your services" -ForegroundColor Gray
+Write-Host "  🧠 Intelligence Agent - Extract structured data from any website" -ForegroundColor Gray
+Write-Host "  📊 Search & Filter   - Advanced filtering and analysis" -ForegroundColor Gray
+Write-Host "  📈 Export Results    - CSV, JSON, and more formats" -ForegroundColor Gray
+Write-Host "`n"
+Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Magenta
+Write-Host "`n"
+
+python -m byteflow.web_companion
+
+Read-Host "Press Enter to exit"

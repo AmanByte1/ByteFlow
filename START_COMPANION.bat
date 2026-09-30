@@ -1,49 +1,67 @@
 @echo off
-setlocal EnableDelayedExpansion
-title ByteFlow Companion
-color 0A
-cd /d "%~dp0"
+REM ═════════════════════════════════════════════════════════════════════
+REM ByteFlow Web Companion - Windows Startup Script
+REM ═════════════════════════════════════════════════════════════════════
 
+cls
 echo.
-echo  ==========================================
-echo   ByteFlow Companion v3
-echo  ==========================================
+echo ╔════════════════════════════════════════════════════════════════╗
+echo ║                   ByteFlow Companion                          ║
+echo ║         Intelligent Data Extraction & Lead Generation         ║
+echo ╚════════════════════════════════════════════════════════════════╝
 echo.
 
+REM Check Python
 python --version >nul 2>&1
-if errorlevel 1 (echo  [ERROR] Python not found & pause & exit /b 1)
-ollama --version >nul 2>&1
-if errorlevel 1 (echo  [ERROR] Ollama not found & pause & exit /b 1)
-
-echo  Finding best model...
-set MODEL=llama3
-for /f "tokens=1" %%m in ('ollama list 2^>nul ^| findstr /v "NAME" ^| findstr /v "^$"') do (
-    set RAW=%%m
-    set MODEL=!RAW::latest=!
-    goto :found
+if errorlevel 1 (
+    echo ❌ Python is not installed or not in PATH
+    echo Please install Python 3.8+ from https://www.python.org
+    pause
+    exit /b 1
 )
-:found
-echo  Model: %MODEL%
+
+echo ✅ Python found
 echo.
 
-pip install psutil pyperclip --quiet --exists-action i 2>nul
+REM Check if venv exists
+if not exist "venv" (
+    echo 📦 Creating virtual environment...
+    python -m venv venv
+    if errorlevel 1 (
+        echo ❌ Failed to create virtual environment
+        pause
+        exit /b 1
+    )
+    echo ✅ Virtual environment created
+    echo.
+)
 
-set PYTHONPATH=%~dp0
+REM Activate venv
+call venv\Scripts\activate.bat
 
-start /min "" ollama serve 2>nul
-timeout /t 2 /nobreak >nul
-
-echo  Launching companion...
-echo  (Holographic orb will appear on screen)
-echo  Right-click orb to quit.
+REM Install/update requirements
+echo 📦 Installing dependencies...
+pip install -r requirements.txt --quiet
+if errorlevel 1 (
+    echo ⚠️ Some dependencies may not have installed correctly
+)
+echo ✅ Dependencies installed
 echo.
-echo  Model aliases you can say or type:
-echo    q1     = qwen2.5-coder:1.5b
-echo    l3     = llama3
-echo    mb     = my-buddy
-echo    m      = mistral
-echo    cl     = codellama
+
+REM Start the server
+echo 🚀 Starting ByteFlow Companion Server...
+echo.
+echo 📍 Open your browser and go to: http://localhost:5000
+echo.
+echo Features:
+echo   🎯 Lead Generator    - Find local businesses needing your services
+echo   🧠 Intelligence Agent - Extract structured data from any website
+echo   📊 Search & Filter   - Advanced filtering and analysis
+echo   📈 Export Results    - CSV, JSON, and more formats
+echo.
+echo Press Ctrl+C to stop the server
 echo.
 
-python byteflow/companion.py --model %MODEL%
+python -m byteflow.web_companion
+
 pause
