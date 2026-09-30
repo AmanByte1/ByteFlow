@@ -28,9 +28,23 @@ import json
 import os
 
 
-DEFAULT_VOSK_MODEL_DIR = os.path.join(
-    os.path.expanduser("~"), ".byteflow", "vosk-model"
-)
+def _find_vosk_model_dir():
+    """
+    Auto-detect the Vosk model directory under ~/.byteflow/.
+    Prefers any named model folder (e.g. vosk-model-hi-0.22, vosk-model-small-en-us-0.15).
+    Falls back to the generic 'vosk-model' folder.
+    """
+    base = os.path.join(os.path.expanduser("~"), ".byteflow")
+    if os.path.isdir(base):
+        candidates = sorted(
+            d for d in os.listdir(base)
+            if d.startswith("vosk-model") and os.path.isdir(os.path.join(base, d))
+        )
+        if candidates:
+            return os.path.join(base, candidates[0])
+    return os.path.join(base, "vosk-model")
+
+DEFAULT_VOSK_MODEL_DIR = _find_vosk_model_dir()
 
 
 class VoiceError(Exception):

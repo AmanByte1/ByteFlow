@@ -262,7 +262,10 @@ def run_companion(agent=None, model="llama3", voice_output=False,
     root.title("ByteFlow")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-transparentcolor", C["void"])
+    try:
+        root.attributes("-transparentcolor", C["void"])
+    except tk.TclError:
+        pass  # not supported on all platforms/drivers — orb still works
     root.configure(bg=C["void"])
     root.geometry(f"{ORB_S+20}x{ORB_S+20}+80+80")
 
@@ -922,39 +925,51 @@ def run_companion(agent=None, model="llama3", voice_output=False,
     _mic_rec    = [None]
 
     def toggle_mic():
-        try:
-            import speech_recognition as sr
-        except ImportError:
+        from byteflow.voice import (Listener, VoiceError,
+                                     vosk_model_present, DEFAULT_VOSK_MODEL_DIR)
+
+        if not vosk_model_present():
             append_msg("System",
-                "Install SpeechRecognition: pip install SpeechRecognition pyaudio", "err")
+                f"No Vosk model found at:\n{DEFAULT_VOSK_MODEL_DIR}\n\n"
+                "Download one from https://alphacephei.com/vosk/models\n"
+                "(e.g. vosk-model-hi-0.22 or vosk-model-small-en-us-0.15)\n"
+                "Unzip and place the folder contents directly inside that path.",
+                "err")
             return
 
         if _mic_active[0]:
+            # Stop recording and transcribe in background
             _mic_active[0] = False
             mic_btn.configure(bg=C["rim"], fg=C["t2"], text="🎙 Voice")
-            set_state("idle")
+            set_state("think")
+
+            def transcribe():
+                try:
+                    text = _mic_rec[0].stop_recording() if _mic_rec[0] else ""
+                    text = (text or "").strip()
+                    if text:
+                        root.after(0, lambda: _on_voice_result(text))
+                    else:
+                        root.after(0, lambda: _on_voice_done(
+                            "Nothing recognised — try speaking closer to the mic"))
+                except Exception as e:
+                    root.after(0, lambda: _on_voice_done(f"Transcription error: {e}"))
+
+            threading.Thread(target=transcribe, daemon=True).start()
             return
 
-        _mic_active[0] = True
-        mic_btn.configure(bg=C["rose"], fg=C["void"], text="🔴 Stop")
-        set_state("listen")
-
-        def listen_thread():
-            recog = sr.Recognizer()
-            try:
-                with sr.Microphone() as src:
-                    recog.adjust_for_ambient_noise(src, duration=0.5)
-                    audio = recog.listen(src, timeout=8, phrase_time_limit=12)
-                text = recog.recognize_google(audio)
-                root.after(0, lambda: _on_voice_result(text))
-            except sr.WaitTimeoutError:
-                root.after(0, lambda: _on_voice_done("No speech detected"))
-            except sr.UnknownValueError:
-                root.after(0, lambda: _on_voice_done("Could not understand"))
-            except Exception as e:
-                root.after(0, lambda: _on_voice_done(f"Mic error: {e}"))
-
-        threading.Thread(target=listen_thread, daemon=True).start()
+        # Start recording
+        try:
+            listener = Listener()
+            listener.start_recording()
+            _mic_rec[0] = listener
+            _mic_active[0] = True
+            mic_btn.configure(bg=C["rose"], fg=C["void"], text="🔴 Stop")
+            set_state("listen")
+        except VoiceError as e:
+            append_msg("System", str(e), "err")
+        except Exception as e:
+            append_msg("System", f"Mic error: {e}", "err")
 
     def _on_voice_result(text):
         _mic_active[0] = False
@@ -1052,15 +1067,80 @@ def run_companion(agent=None, model="llama3", voice_output=False,
 
     poll()
 
+    # ════════════════════════════════════════════════════════
+    # CONVERSATION MODE (hands-free continuous listening)
+    # ════════════════════════════════════════════════════════
+    _conv_listener = [None]
+
+    def _start_conversation_mode():
+        from byteflow.voice import (ConversationListener, VoiceError,
+                                     vosk_model_present, DEFAULT_VOSK_MODEL_DIR)
+        if not vosk_model_present():
+            append_msg("System",
+                f"Conversation mode needs a Vosk model at:\n{DEFAULT_VOSK_MODEL_DIR}",
+                "err")
+            return
+
+        def on_utterance(text):
+            root.after(0, lambda: _on_voice_result(text))
+
+        def on_partial(text):
+            root.after(0, lambda: status_lbl.configure(
+                text=f"● {text[:40]}…" if len(text) > 40 else f"● {text}",
+                fg=C["violet"]))
+
+        def on_listening_change(is_active):
+            state = "listen" if is_active else "idle"
+            root.after(0, lambda: set_state(state))
+
+        try:
+            conv = ConversationListener(
+                on_utterance=on_utterance,
+                on_partial=on_partial,
+                on_listening_change=on_listening_change,
+            )
+            conv.start()
+            _conv_listener[0] = conv
+            mic_btn.configure(bg=C["violet"], fg=C["void"], text="🟣 Conv")
+            append_msg("System",
+                "Conversation mode active — just speak, I'm always listening.", "sys")
+            set_state("listen")
+        except VoiceError as e:
+            append_msg("System", str(e), "err")
+        except Exception as e:
+            append_msg("System", f"Conversation mode error: {e}", "err")
+
+    # Auto-start conversation mode if flag was passed
+    if conversation_mode:
+        root.after(500, _start_conversation_mode)
+    elif voice_input:
+        # voice_input = show mic button prominently and hint user
+        root.after(300, lambda: append_msg(
+            "System", "Voice input ready — click 🎙 Voice to start recording.", "sys"))
+
     # Welcome
+    voice_hint = (
+        "Conversation mode active — just speak!\n"
+        if conversation_mode else
+        "Voice: click 🎙 Voice to record (Vosk offline STT).\n"
+        if voice_input else
+        "Voice: click 🎙 Voice to speak (needs vosk-model in ~/.byteflow/).\n"
+    )
     append_msg("ByteFlow",
         f"Hello! Running on {st['model']}.\n"
         f"I have access to all automation tools, memory, KB, and more.\n"
         f"Say or type a model alias to switch: q1=qwen-coder, l3=llama3, mb=my-buddy\n"
-        f"Voice: click 🎙 Voice or say 'hey byteflow' to activate.",
+        f"{voice_hint}",
         "bf")
 
     root.mainloop()
+
+    # Clean up conversation listener on exit
+    if _conv_listener[0] is not None:
+        try:
+            _conv_listener[0].stop()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
