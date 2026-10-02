@@ -566,9 +566,10 @@ def run_companion(agent=None, model="llama3", voice_output=False,
         ("📊 Workflows",      "list_workflows"),
         ("🧠 My Memories",    "history_stats"),
         ("🤖 My Skills",      "What tools and skills do you have?"),
-        ("🔄 Switch q1",      "switch to q1"),
-        ("🔄 Switch llama3",  "switch to llama3"),
-        ("🔄 Switch my-buddy","switch to my-buddy"),
+        ("🔄 Switch q1",       "switch to q1"),
+        ("🔄 Switch llama3",   "switch to llama3"),
+        ("🔄 Switch phi4-mini","switch to phi4mini"),
+        ("🔄 Switch my-buddy", "switch to my-buddy"),
     ]
 
     def run_quick(cmd):
@@ -698,11 +699,12 @@ def run_companion(agent=None, model="llama3", voice_output=False,
     models_frame.pack(fill="x", padx=12, pady=(4,10))
 
     known_aliases = [
-        ("⚡ q1",       "q1",       "qwen2.5-coder:1.5b — fast code model"),
-        ("🦙 l3",       "llama3",   "Llama 3 — general purpose"),
-        ("🤝 mb",       "my-buddy", "My Buddy — your custom model"),
-        ("💨 m",        "mistral",  "Mistral — fast & efficient"),
-        ("💻 cl",       "codellama","CodeLlama — code specialist"),
+        ("⚡ q1",       "q1",        "qwen2.5-coder:1.5b — fast code model"),
+        ("🦙 l3",       "llama3",    "Llama 3 — general purpose"),
+        ("🤝 mb",       "my-buddy",  "My Buddy — your custom model"),
+        ("🔬 pm",       "phi4mini",  "Phi-4 Mini — fast & smart (2.5B)"),
+        ("💨 m",        "mistral",   "Mistral — fast & efficient"),
+        ("💻 cl",       "codellama", "CodeLlama — code specialist"),
     ]
 
     def do_switch_model(alias, name):
@@ -1074,41 +1076,73 @@ def run_companion(agent=None, model="llama3", voice_output=False,
 
     def _start_conversation_mode():
         from byteflow.voice import (ConversationListener, VoiceError,
-                                     vosk_model_present, DEFAULT_VOSK_MODEL_DIR)
+                                     vosk_model_present, stt_available,
+                                     DEFAULT_VOSK_MODEL_DIR)
+
+        # Check dependencies first
+        if not stt_available():
+            append_msg("System",
+                "Conversation mode needs vosk + sounddevice.\n"
+                "Run: pip install vosk sounddevice", "err")
+            return
+
         if not vosk_model_present():
             append_msg("System",
-                f"Conversation mode needs a Vosk model at:\n{DEFAULT_VOSK_MODEL_DIR}",
-                "err")
+                f"No Vosk model found at:\n{DEFAULT_VOSK_MODEL_DIR}\n\n"
+                "Download from https://alphacephei.com/vosk/models\n"
+                "and unzip into that folder.", "err")
+            return
+
+        # Check microphone is accessible
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            input_devs = [d for d in devices if d["max_input_channels"] > 0]
+            if not input_devs:
+                append_msg("System",
+                    "No microphone found. Please connect a mic and try again.", "err")
+                return
+        except Exception as e:
+            append_msg("System", f"Audio device error: {e}", "err")
             return
 
         def on_utterance(text):
             root.after(0, lambda: _on_voice_result(text))
 
         def on_partial(text):
+            short = text[:35] + "…" if len(text) > 35 else text
             root.after(0, lambda: status_lbl.configure(
-                text=f"● {text[:40]}…" if len(text) > 40 else f"● {text}",
-                fg=C["violet"]))
+                text=f"● {short}", fg=C["violet"]))
 
         def on_listening_change(is_active):
-            state = "listen" if is_active else "idle"
-            root.after(0, lambda: set_state(state))
+            root.after(0, lambda: set_state("listen" if is_active else "idle"))
 
-        try:
-            conv = ConversationListener(
-                on_utterance=on_utterance,
-                on_partial=on_partial,
-                on_listening_change=on_listening_change,
-            )
-            conv.start()
-            _conv_listener[0] = conv
-            mic_btn.configure(bg=C["violet"], fg=C["void"], text="🟣 Conv")
-            append_msg("System",
-                "Conversation mode active — just speak, I'm always listening.", "sys")
-            set_state("listen")
-        except VoiceError as e:
-            append_msg("System", str(e), "err")
-        except Exception as e:
-            append_msg("System", f"Conversation mode error: {e}", "err")
+        def _launch():
+            try:
+                conv = ConversationListener(
+                    on_utterance=on_utterance,
+                    on_partial=on_partial,
+                    on_listening_change=on_listening_change,
+                )
+                conv.start()
+                _conv_listener[0] = conv
+                root.after(0, lambda: [
+                    mic_btn.configure(bg=C["violet"], fg=C["void"], text="🟣 Conv"),
+                    append_msg("System",
+                        "Conversation mode active — just speak!\n"
+                        "I'll auto-detect when you start and stop talking.", "sys"),
+                    set_state("listen"),
+                ])
+            except VoiceError as e:
+                root.after(0, lambda: append_msg("System", str(e), "err"))
+            except Exception as e:
+                root.after(0, lambda: append_msg("System",
+                    f"Conversation mode failed: {e}\n"
+                    "Try: byteflow companion --voice (push-to-talk instead)", "err"))
+
+        # Launch in background so GUI doesn't freeze while model loads
+        append_msg("System", "Loading Vosk model… (first time may take a few seconds)", "sys")
+        threading.Thread(target=_launch, daemon=True).start()
 
     # Auto-start conversation mode if flag was passed
     if conversation_mode:

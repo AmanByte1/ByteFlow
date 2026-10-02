@@ -30,7 +30,12 @@ ALIASES: dict[str, str] = {
     # Mistral
     "m":          "mistral",
     "mistral":    "mistral",
-    # Phi
+    # Phi4-mini (actually installed)
+    "phi4mini":   "phi4-mini:latest",
+    "phi4":       "phi4-mini:latest",
+    "pm":         "phi4-mini:latest",
+    "phimini":    "phi4-mini:latest",
+    # Phi (generic)
     "phi":        "phi",
     "p":          "phi",
     # Gemma
@@ -88,6 +93,14 @@ MODEL_INFO: dict[str, dict] = {
         "desc": "Fast and efficient",
         "size": "7B",
         "best_for": ["chat", "code", "fast"],
+    },
+    "phi4-mini:latest": {
+        "alias": "pm",
+        "label": "Phi-4 Mini",
+        "emoji": "🔬",
+        "desc": "Microsoft Phi-4 Mini — small, fast, smart",
+        "size": "2.5B",
+        "best_for": ["chat", "quick", "lightweight", "reasoning"],
     },
     "phi": {
         "alias": "p",

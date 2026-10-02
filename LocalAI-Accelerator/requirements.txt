@@ -1,0 +1,17 @@
+psutil>=5.9.0
+pynvml>=12.0.0
+torch>=2.0.0
+numpy>=1.21.0
+pydantic>=2.0.0
+aioqueue>=0.2.1
+
+# Optional frameworks
+transformers>=4.30.0
+bitsandbytes>=0.40.0
+llama-cpp-python>=0.2.0
+
+# Development
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0
+mypy>=0.950
