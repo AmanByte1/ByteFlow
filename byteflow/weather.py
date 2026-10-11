@@ -16,6 +16,7 @@ bot-detection at all.
 """
 
 import json
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -65,24 +66,32 @@ class WeatherError(Exception):
     pass
 
 
-def _get_json(url, params):
-    query = urllib.parse.urlencode(params)
-    full_url = f"{url}?{query}"
-    request = urllib.request.Request(full_url, headers={"User-Agent": _USER_AGENT})
-    try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        raise WeatherError(f"Weather service request failed with HTTP {e.code}.") from e
-    except urllib.error.URLError as e:
-        raise WeatherError(f"Could not reach the weather service: {e.reason}.") from e
-    except TimeoutError as e:
-        raise WeatherError(f"Weather service request timed out. ({e})") from e
+def _get_json(url, params, retries=3):
+    last_error = None
+    for attempt in range(retries):
+        query = urllib.parse.urlencode(params)
+        full_url = f"{url}?{query}"
+        request = urllib.request.Request(full_url, headers={"User-Agent": _USER_AGENT})
+        try:
+            with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+                raw = response.read().decode("utf-8")
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise WeatherError(f"Weather service returned an unreadable response. ({e})") from e
+        except urllib.error.HTTPError as e:
+            last_error = WeatherError(f"Weather service request failed with HTTP {e.code}.")
+        except urllib.error.URLError as e:
+            last_error = WeatherError(f"Could not reach the weather service: {e.reason}.")
+        except TimeoutError as e:
+            last_error = WeatherError(f"Weather service request timed out. ({e})")
+        except Exception as e:
+            last_error = WeatherError(f"Weather service request failed unexpectedly: {e}")
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise WeatherError(f"Weather service returned an unreadable response. ({e})") from e
+        if attempt < retries - 1:
+            time.sleep(0.5 * (attempt + 1))
+
+    raise last_error or WeatherError("Weather service request failed.")
 
 
 def geocode(location):
@@ -102,7 +111,6 @@ def geocode(location):
     name = top.get("name", location)
     admin1 = top.get("admin1")
     country = top.get("country")
-    # de-dupe while preserving order (e.g. avoid "Ahmedabad, Ahmedabad")
     parts = list(dict.fromkeys(p for p in (name, admin1, country) if p))
     display_name = ", ".join(parts)
 
