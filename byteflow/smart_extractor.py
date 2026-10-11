@@ -1,22 +1,25 @@
 """
-Smart Data Extraction Engine
-=============================
-Intelligent web data extraction with iterative LLM-based refinement
+Smart Data Extraction Engine v2 - IMPROVED
+============================================
+Intelligent web data extraction with LLM-based validation and AI agent loop.
 
-Features:
-  - Multi-pass crawling with feedback loops
-  - LLM-based data validation & filtering
-  - Automatic query refinement
-  - Context-aware extraction
-  - Quality scoring & verification
-  - Works with ANY type of data
+Key Improvements:
+  - Real LLM-based extraction (not just keyword matching)
+  - Proper crawl4ai integration with timeouts
+  - Genuine validation using AI agent
+  - Smart feedback loop with LLM reasoning
+  - Error recovery and retry logic
+  - Structured data parsing (JSON-LD, metadata, tables)
+  - Type-aware field validation
 """
 
 import asyncio
 import json
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 from enum import Enum
+
 
 try:
     from crawl4ai import AsyncWebCrawler
@@ -41,24 +44,36 @@ class ExtractionContext:
         self.criteria = criteria
         self.extraction_history = []
         self.feedback_history = []
+        self.validation_history = []
         self.current_attempt = 0
         self.max_attempts = 5
     
-    def add_extraction(self, data: Dict, source: str):
+    def add_extraction(self, data: Dict, source: str, strategy: str):
         """Log extraction attempt"""
         self.extraction_history.append({
             'attempt': self.current_attempt,
             'data': data,
             'source': source,
+            'strategy': strategy,
             'timestamp': datetime.now().isoformat()
         })
     
     def add_feedback(self, feedback: str, suggestion: str):
-        """Log LLM feedback"""
+        """Log AI feedback"""
         self.feedback_history.append({
             'attempt': self.current_attempt,
             'feedback': feedback,
             'suggestion': suggestion,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    def add_validation(self, is_valid: bool, score: float, details: Dict):
+        """Log validation result"""
+        self.validation_history.append({
+            'attempt': self.current_attempt,
+            'valid': is_valid,
+            'score': score,
+            'details': details,
             'timestamp': datetime.now().isoformat()
         })
 
@@ -66,9 +81,10 @@ class ExtractionContext:
 class SmartCrawler:
     """Intelligent web crawler with context-aware extraction"""
     
-    def __init__(self):
+    def __init__(self, timeout: float = 30.0):
         self.crawler = None
         self.extraction_cache = {}
+        self.timeout = timeout
     
     async def init(self):
         """Initialize async crawler"""
@@ -83,7 +99,7 @@ class SmartCrawler:
         search_strategy: str = "default"
     ) -> Dict:
         """
-        Crawl website with extraction context and strategy.
+        Crawl website with timeout and error recovery.
         
         Strategies:
           - "default": Standard content extraction
@@ -95,308 +111,442 @@ class SmartCrawler:
         if not self.crawler:
             await self.init()
         
+        context.current_attempt += 1
+        cache_key = f"{url}_{search_strategy}"
+        
+        # Try cache first for same strategy
+        if cache_key in self.extraction_cache and context.current_attempt > 1:
+            cached = self.extraction_cache[cache_key]
+            return {
+                **cached,
+                'cached': True,
+                'cache_age': datetime.now().isoformat()
+            }
+        
         try:
-            # Log extraction attempt
-            context.current_attempt += 1
-            
-            # Determine extraction strategy
-            extraction_prompt = self._build_extraction_prompt(context, search_strategy)
-            
-            # Crawl the page
-            result = await self.crawler.arun(
-                url=url,
-                extraction_strategy='llm-extraction',
-                extraction_schema={
-                    'fields': context.criteria,
-                    'strategy': search_strategy,
-                }
+            # Crawl with timeout
+            result = await asyncio.wait_for(
+                self._do_crawl(url),
+                timeout=self.timeout
             )
             
             # Extract raw data
+            content = result.markdown or result.cleaned_html or ""
+            
+            if not content or len(content) < 50:
+                return {
+                    'url': url,
+                    'strategy': search_strategy,
+                    'success': False,
+                    'error': 'No meaningful content extracted',
+                    'crawl_time': datetime.now().isoformat()
+                }
+            
             raw_data = {
                 'url': url,
                 'strategy': search_strategy,
-                'content': result.markdown or result.html,
-                'extracted_fields': self._parse_extracted_content(result, context),
-                'crawl_time': datetime.now().isoformat(),
-                'success': True
+                'content': content,
+                'html': result.html or "",
+                'success': True,
+                'crawl_time': datetime.now().isoformat()
             }
             
             # Cache result
-            cache_key = f"{url}_{search_strategy}"
             self.extraction_cache[cache_key] = raw_data
+            context.add_extraction(raw_data, url, search_strategy)
             
             return raw_data
-            
-        except Exception as e:
+        
+        except asyncio.TimeoutError:
             return {
                 'url': url,
                 'strategy': search_strategy,
                 'success': False,
-                'error': str(e),
+                'error': f'Crawl timeout (>{self.timeout}s)',
+                'crawl_time': datetime.now().isoformat()
+            }
+        except Exception as e:
+            error_msg = str(e)[:100]
+            return {
+                'url': url,
+                'strategy': search_strategy,
+                'success': False,
+                'error': f'Crawl failed: {error_msg}',
                 'crawl_time': datetime.now().isoformat()
             }
     
-    def _build_extraction_prompt(self, context: ExtractionContext, strategy: str) -> str:
-        """Build LLM prompt for extraction"""
-        return f"""
-Extract the following data from the webpage:
-Query: {context.user_query}
-Data Type: {context.data_type}
-Strategy: {strategy}
+    async def _do_crawl(self, url: str):
+        """Actual crawl operation - can be overridden for testing"""
+        return await self.crawler.arun(
+            url=url,
+            bypass_cache=True,
+            wait_until="networkidle",
+            screenshot=False
+        )
 
-Required Fields:
-{json.dumps(context.criteria, indent=2)}
 
-Previous Feedback:
-{json.dumps(context.feedback_history[-1:], indent=2) if context.feedback_history else 'None'}
-
-Return structured data matching the criteria.
-"""
+class StructuredDataExtractor:
+    """Extract data from JSON-LD, metadata, tables"""
     
-    def _parse_extracted_content(self, result, context: ExtractionContext) -> Dict:
-        """Parse crawler result into structured data"""
-        content = result.markdown or ""
-        
-        parsed = {}
-        for criterion in context.criteria:
-            # Simple parsing - in real world would be more sophisticated
-            if criterion.lower() in content.lower():
-                parsed[criterion] = self._extract_field_value(content, criterion)
-        
-        return parsed
+    @staticmethod
+    def extract_json_ld(content: str) -> Dict:
+        """Extract JSON-LD structured data"""
+        try:
+            pattern = r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>'
+            matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
+            
+            for match in matches:
+                try:
+                    data = json.loads(match)
+                    return data
+                except:
+                    continue
+        except:
+            pass
+        return {}
     
-    def _extract_field_value(self, content: str, field: str) -> Optional[str]:
-        """Extract specific field value from content"""
+    @staticmethod
+    def extract_metadata(content: str) -> Dict:
+        """Extract from meta tags and Open Graph"""
+        metadata = {}
+        
+        # Open Graph
+        og_pattern = r'<meta[^>]*property=["\']og:([^"\']+)["\'][^>]*content=["\']([^"\']*)["\']'
+        for key, value in re.findall(og_pattern, content, re.IGNORECASE):
+            metadata[f"og_{key}"] = value
+        
+        # Twitter Card
+        twitter_pattern = r'<meta[^>]*name=["\']twitter:([^"\']+)["\'][^>]*content=["\']([^"\']*)["\']'
+        for key, value in re.findall(twitter_pattern, content, re.IGNORECASE):
+            metadata[f"twitter_{key}"] = value
+        
+        # Schema.org microdata
+        schema_pattern = r'<meta[^>]*itemprop=["\']([^"\']+)["\'][^>]*content=["\']([^"\']*)["\']'
+        for key, value in re.findall(schema_pattern, content, re.IGNORECASE):
+            metadata[f"schema_{key}"] = value
+        
+        return metadata
+    
+    @staticmethod
+    def extract_tables(content: str) -> List[Dict]:
+        """Extract basic table data"""
+        tables = []
+        
+        # Simple table extraction from markdown (crawl4ai provides markdown)
         lines = content.split('\n')
-        for i, line in enumerate(lines):
-            if field.lower() in line.lower():
-                # Return the line and next few lines as context
-                return '\n'.join(lines[i:min(i+3, len(lines))])
-        return None
+        current_table = None
+        
+        for line in lines:
+            if '|' in line and current_table is None:
+                current_table = {'headers': [], 'rows': []}
+            
+            if current_table and '|' in line:
+                cells = [cell.strip() for cell in line.split('|')[1:-1]]
+                if current_table['headers'] and cells:
+                    current_table['rows'].append(cells)
+                elif not current_table['headers']:
+                    current_table['headers'] = cells
+            elif current_table and '|' not in line and current_table['headers']:
+                tables.append(current_table)
+                current_table = None
+        
+        if current_table and current_table['headers']:
+            tables.append(current_table)
+        
+        return tables
 
 
-class DataValidator:
-    """LLM-based data validation and quality assessment"""
+class AIExtractor:
+    """Use AI agent to intelligently extract fields"""
     
     def __init__(self, agent=None):
         self.agent = agent
-        self.validation_rules = {}
+    
+    async def extract_fields(
+        self,
+        content: str,
+        criteria: List[str],
+        user_query: str,
+        data_type: str,
+        strategy: str
+    ) -> Dict:
+        """Use AI to extract specific fields from content"""
+        
+        if not self.agent:
+            return {}
+        
+        # Build extraction prompt
+        prompt = f"""You are an expert data extraction AI.
+
+TASK: Extract ONLY the following fields from the webpage content.
+
+QUERY: {user_query}
+DATA TYPE: {data_type}
+EXTRACTION STRATEGY: {strategy}
+
+REQUIRED FIELDS:
+{json.dumps(criteria, indent=2)}
+
+WEBPAGE CONTENT (first 3000 chars):
+{content[:3000]}
+
+RULES:
+1. Return ONLY a JSON object with the exact field names
+2. Use actual values from the page, not descriptions
+3. If a field is not found, use null
+4. For numeric fields (price, rating, count), extract ONLY the number
+5. For text fields, keep it brief (under 100 chars)
+6. Use proper JSON format - ONLY return JSON, nothing else
+
+EXAMPLE OUTPUT:
+{{
+  "name": "Product Name",
+  "price": "99.99",
+  "rating": "4.5",
+  "reviews_count": "1234"
+}}
+
+Now extract:"""
+        
+        try:
+            # Call agent with timeout
+            response = await asyncio.wait_for(
+                self._call_agent(prompt),
+                timeout=15.0
+            )
+            
+            # Parse JSON response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                extracted = json.loads(json_match.group())
+                return extracted
+        except Exception as e:
+            pass
+        
+        return {}
+    
+    async def _call_agent(self, prompt: str) -> str:
+        """Call agent - can be overridden for testing"""
+        if self.agent and hasattr(self.agent, 'chat'):
+            # Async wrapper
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.agent.chat, prompt)
+        return "{}"
+
+
+class AIValidator:
+    """Use AI agent to validate extraction quality"""
+    
+    def __init__(self, agent=None):
+        self.agent = agent
     
     async def validate(
         self,
-        raw_data: Dict,
+        extracted_fields: Dict,
+        content: str,
         context: ExtractionContext
-    ) -> Tuple[bool, float, str]:
+    ) -> Tuple[bool, float, Dict]:
         """
-        Validate extracted data against criteria.
+        Use AI to validate extracted data.
         
         Returns:
-            (is_valid, confidence_score, feedback_message)
+            (is_valid, confidence_score, validation_details)
         """
-        # Check completeness
-        completeness_score = self._check_completeness(raw_data, context)
         
-        # Check quality
-        quality_score = self._check_quality(raw_data, context)
+        if not self.agent:
+            return self._fallback_validate(extracted_fields, context)
         
-        # Check relevance
-        relevance_score = self._check_relevance(raw_data, context)
+        validation_prompt = f"""You are a data quality validator.
+
+ORIGINAL QUERY: {context.user_query}
+REQUIRED FIELDS: {json.dumps(context.criteria)}
+DATA TYPE: {context.data_type}
+
+EXTRACTED DATA:
+{json.dumps(extracted_fields, indent=2)}
+
+WEBPAGE CONTENT (first 2000 chars):
+{content[:2000]}
+
+Validate each field. Return JSON with:
+{{
+  "field_validations": {{
+    "field_name": {{
+      "valid": true/false,
+      "reason": "why valid or not"
+    }}
+  }},
+  "overall_completeness": 0.0-1.0,
+  "overall_accuracy": 0.0-1.0,
+  "overall_relevance": 0.0-1.0,
+  "confidence": 0.0-1.0,
+  "feedback": "brief feedback"
+}}"""
         
-        # Overall score
-        overall_score = (completeness_score + quality_score + relevance_score) / 3
+        try:
+            response = await asyncio.wait_for(
+                self._call_agent(validation_prompt),
+                timeout=15.0
+            )
+            
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                
+                completeness = result.get('overall_completeness', 0.0)
+                accuracy = result.get('overall_accuracy', 0.0)
+                relevance = result.get('overall_relevance', 0.0)
+                confidence = result.get('confidence', 0.0)
+                
+                # Calculate overall score
+                overall_score = (accuracy + completeness + relevance) / 3
+                overall_score = overall_score * confidence  # Reduce by confidence
+                
+                is_valid = overall_score >= 0.75
+                
+                validation_details = {
+                    'completeness': completeness,
+                    'accuracy': accuracy,
+                    'relevance': relevance,
+                    'confidence': confidence,
+                    'field_validations': result.get('field_validations', {}),
+                    'feedback': result.get('feedback', '')
+                }
+                
+                context.add_validation(is_valid, overall_score, validation_details)
+                
+                return is_valid, overall_score, validation_details
+        except Exception as e:
+            pass
         
-        # Determine validity
+        # Fallback if AI fails
+        return self._fallback_validate(extracted_fields, context)
+    
+    def _fallback_validate(self, extracted_fields: Dict, context: ExtractionContext) -> Tuple:
+        """Fallback validation without AI"""
+        # Count non-null fields
+        valid_fields = sum(1 for v in extracted_fields.values() if v is not None and str(v).strip())
+        completeness = valid_fields / len(context.criteria) if context.criteria else 0.0
+        
+        # Basic checks
+        has_numeric = any(isinstance(v, (int, float)) for v in extracted_fields.values())
+        has_text = any(isinstance(v, str) and len(v) > 2 for v in extracted_fields.values())
+        quality = 0.5 if (has_numeric or has_text) else 0.0
+        
+        overall_score = (completeness + quality) / 2
         is_valid = overall_score >= 0.75
         
-        # Generate feedback
-        feedback = self._generate_feedback(
-            raw_data, context,
-            completeness_score,
-            quality_score,
-            relevance_score
-        )
+        context.add_validation(is_valid, overall_score, {
+            'completeness': completeness,
+            'quality': quality,
+            'feedback': 'Fallback validation (no AI)'
+        })
         
-        return is_valid, overall_score, feedback
+        return is_valid, overall_score, {'completeness': completeness, 'quality': quality}
     
-    def _check_completeness(self, raw_data: Dict, context: ExtractionContext) -> float:
-        """Check if all required criteria are present"""
-        if not raw_data.get('success'):
-            return 0.0
-        
-        extracted = raw_data.get('extracted_fields', {})
-        found_count = len([v for v in extracted.values() if v])
-        required_count = len(context.criteria)
-        
-        if required_count == 0:
-            return 1.0
-        
-        return found_count / required_count
-    
-    def _check_quality(self, raw_data: Dict, context: ExtractionContext) -> float:
-        """Check quality of extracted data"""
-        if not raw_data.get('success'):
-            return 0.0
-        
-        extracted = raw_data.get('extracted_fields', {})
-        
-        # Quality based on:
-        # - No empty fields
-        # - No error messages
-        # - Reasonable length
-        
-        quality_score = 0.0
-        
-        for field, value in extracted.items():
-            if not value:
-                continue
-            
-            value_str = str(value)
-            
-            # Check length (not too short or too long)
-            if 10 < len(value_str) < 10000:
-                quality_score += 0.3
-            
-            # Check no error keywords
-            if 'error' not in value_str.lower() and '404' not in value_str:
-                quality_score += 0.3
-            
-            # Check data looks real
-            if any(c.isalnum() for c in value_str):
-                quality_score += 0.4
-        
-        return min(quality_score / len(extracted) if extracted else 0, 1.0)
-    
-    def _check_relevance(self, raw_data: Dict, context: ExtractionContext) -> float:
-        """Check relevance to original query"""
-        if not raw_data.get('success'):
-            return 0.0
-        
-        content = raw_data.get('content', '')
-        query_words = context.user_query.lower().split()
-        
-        # Count how many query words appear in content
-        matched_words = sum(1 for word in query_words if word in content.lower())
-        
-        if not query_words:
-            return 1.0
-        
-        return matched_words / len(query_words)
-    
-    def _generate_feedback(
-        self,
-        raw_data: Dict,
-        context: ExtractionContext,
-        completeness: float,
-        quality: float,
-        relevance: float
-    ) -> str:
-        """Generate actionable feedback for crawler refinement"""
-        issues = []
-        suggestions = []
-        
-        if completeness < 0.5:
-            issues.append(f"Missing {int((1 - completeness) * len(context.criteria))} required fields")
-            suggestions.append("Try searching more specific URLs or different page sections")
-        
-        if quality < 0.5:
-            issues.append("Low quality extracted data")
-            suggestions.append("Look for more structured data (tables, lists) instead of raw text")
-        
-        if relevance < 0.5:
-            issues.append("Data doesn't match original query")
-            suggestions.append("Try different search terms or sources more specific to the query")
-        
-        if not issues:
-            return "✅ Data looks good! Meets criteria."
-        
-        feedback = "⚠️ Issues found:\n"
-        feedback += "\n".join(f"  • {issue}" for issue in issues)
-        feedback += "\n\nSuggestions:\n"
-        feedback += "\n".join(f"  • {suggestion}" for suggestion in suggestions)
-        
-        return feedback
+    async def _call_agent(self, prompt: str) -> str:
+        """Call agent - can be overridden for testing"""
+        if self.agent and hasattr(self.agent, 'chat'):
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.agent.chat, prompt)
+        return "{}"
 
 
-class FeedbackLoop:
-    """Manages iterative extraction refinement"""
+class AIFeedbackLoop:
+    """AI-powered feedback loop for intelligent refinement"""
     
-    def __init__(self, crawler: SmartCrawler, validator: DataValidator):
-        self.crawler = crawler
-        self.validator = validator
+    def __init__(self, agent=None):
+        self.agent = agent
     
-    async def refine_extraction(
+    async def analyze_and_refine(
         self,
         context: ExtractionContext,
-        url: str,
-        validation_result: Tuple[bool, float, str]
-    ) -> Tuple[Optional[Dict], str]:
+        last_validation_details: Dict,
+        current_strategy: str
+    ) -> Tuple[str, str]:
         """
-        Based on validation feedback, refine the extraction strategy.
+        Use AI to analyze validation feedback and decide next strategy.
         
         Returns:
-            (refined_data, next_action)
+            (next_strategy, reasoning)
         """
-        is_valid, score, feedback = validation_result
         
-        if is_valid or context.current_attempt >= context.max_attempts:
-            return None, "complete"
+        if not self.agent:
+            return self._fallback_next_strategy(context, current_strategy)
         
-        # Analyze feedback and determine next strategy
-        next_strategy = self._determine_next_strategy(feedback, context)
-        next_url = self._determine_next_url(feedback, url, context)
+        feedback_prompt = f"""You are an extraction strategy optimizer.
+
+ORIGINAL QUERY: {context.user_query}
+DATA TYPE: {context.data_type}
+
+CURRENT STRATEGY USED: {current_strategy}
+
+VALIDATION FEEDBACK:
+{json.dumps(last_validation_details, indent=2)}
+
+AVAILABLE STRATEGIES:
+- "default": General extraction
+- "table": For data in tables/grids
+- "list": For bulleted/numbered lists
+- "nested": For hierarchical/nested data
+- "specific": For targeted field extraction
+- "metadata": For meta tags/JSON-LD
+
+Based on the validation feedback, what's the BEST strategy to try next?
+
+Respond with ONLY:
+{{"strategy": "name", "reasoning": "brief explanation"}}"""
         
-        # Store feedback
-        context.add_feedback(feedback, f"Try strategy: {next_strategy} on {next_url}")
+        try:
+            response = await asyncio.wait_for(
+                self._call_agent(feedback_prompt),
+                timeout=10.0
+            )
+            
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                strategy = result.get('strategy', 'default')
+                reasoning = result.get('reasoning', 'AI refinement')
+                
+                valid_strategies = ["default", "table", "list", "nested", "specific", "metadata"]
+                if strategy in valid_strategies:
+                    return strategy, reasoning
+        except:
+            pass
         
-        return {
-            'strategy': next_strategy,
-            'url': next_url,
-            'score': score,
-            'feedback': feedback
-        }, "retry"
+        return self._fallback_next_strategy(context, current_strategy)
     
-    def _determine_next_strategy(self, feedback: str, context: ExtractionContext) -> str:
-        """Determine next crawling strategy based on feedback"""
-        feedback_lower = feedback.lower()
+    def _fallback_next_strategy(self, context: ExtractionContext, current: str) -> Tuple[str, str]:
+        """Fallback strategy rotation"""
+        strategies = ["default", "specific", "table", "list", "nested", "metadata"]
+        try:
+            current_idx = strategies.index(current)
+            next_strategy = strategies[(current_idx + 1) % len(strategies)]
+        except:
+            next_strategy = strategies[1]
         
-        if "table" in feedback_lower or "structured" in feedback_lower:
-            return "table"
-        elif "list" in feedback_lower:
-            return "list"
-        elif "nested" in feedback_lower or "hierarchy" in feedback_lower:
-            return "nested"
-        elif "specific" in feedback_lower:
-            return "specific"
-        else:
-            # Rotate through strategies
-            strategies = ["default", "specific", "table", "list", "nested"]
-            current_index = strategies.index(context.extraction_history[-1].get('strategy', 'default') if context.extraction_history else 'default')
-            return strategies[(current_index + 1) % len(strategies)]
+        return next_strategy, "Strategy rotation (no AI available)"
     
-    def _determine_next_url(self, feedback: str, current_url: str, context: ExtractionContext) -> str:
-        """Determine next URL to crawl based on feedback"""
-        feedback_lower = feedback.lower()
-        
-        # If feedback suggests different source
-        if "different source" in feedback_lower or "more specific" in feedback_lower:
-            # Could search for better URLs
-            # For now, return same URL with different strategy
-            return current_url
-        
-        return current_url
+    async def _call_agent(self, prompt: str) -> str:
+        """Call agent - can be overridden for testing"""
+        if self.agent and hasattr(self.agent, 'chat'):
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.agent.chat, prompt)
+        return "{}"
 
 
 class IntelligenceAgent:
-    """Main orchestrator for intelligent data extraction"""
+    """Main orchestrator for intelligent data extraction with AI loop"""
     
-    def __init__(self, agent=None, model: str = "phi4-mini"):
+    def __init__(self, agent=None, model: str = "llama3"):
         self.agent = agent
         self.model = model
-        self.crawler = SmartCrawler()
-        self.validator = DataValidator(agent)
-        self.feedback_loop = FeedbackLoop(self.crawler, self.validator)
-        self.extraction_cache = {}
+        self.crawler = SmartCrawler(timeout=30.0)
+        self.extractor = AIExtractor(agent)
+        self.validator = AIValidator(agent)
+        self.feedback_loop = AIFeedbackLoop(agent)
+        self.structured_extractor = StructuredDataExtractor()
     
     async def extract(
         self,
@@ -407,22 +557,25 @@ class IntelligenceAgent:
         max_attempts: int = 5
     ) -> Dict:
         """
-        Main extraction pipeline with iterative refinement.
+        Main extraction pipeline with AI-driven refinement.
         
         Args:
             query: What to extract (natural language)
-            data_type: Type of data (e.g., "product_listings", "job_posts")
+            data_type: Type of data (e.g., "product", "restaurant")
             criteria: List of fields to extract
             urls: URLs to crawl
-            max_attempts: Max refinement attempts
+            max_attempts: Max refinement attempts per URL
         
         Returns:
             {
                 'success': bool,
-                'data': [extracted items],
+                'data': extracted_fields,
                 'quality_score': float,
                 'attempts': int,
-                'history': extraction history
+                'history': extraction_history,
+                'feedback': feedback_history,
+                'strategy_evolution': strategy_changes,
+                'validation_details': final_validation
             }
         """
         
@@ -439,96 +592,131 @@ class IntelligenceAgent:
         # Initialize crawler
         await self.crawler.init()
         
-        all_extracted_data = []
+        best_extracted_data = None
         best_quality_score = 0.0
+        best_validation_details = {}
+        strategy_evolution = []
         
         # Process each URL
         for url in urls:
             print(f"\n📍 Processing: {url}")
             
             is_complete = False
-            refinement_history = []
+            current_strategy = "default"
             
-            # Refinement loop
+            # Refinement loop for this URL
             while not is_complete and context.current_attempt < context.max_attempts:
                 
-                # Determine strategy for this attempt
-                if context.current_attempt == 0:
-                    strategy = "default"
-                else:
-                    strategy = refinement_history[-1].get('strategy', 'default') if refinement_history else "default"
+                print(f"   Attempt {context.current_attempt + 1}/{context.max_attempts} (Strategy: {current_strategy})")
                 
-                print(f"   Attempt {context.current_attempt + 1}/{context.max_attempts} (Strategy: {strategy})")
-                
-                # STEP 1: Crawl
+                # STEP 1: Crawl with timeout and error recovery
                 raw_data = await self.crawler.crawl_with_context(
                     url=url,
                     context=context,
-                    search_strategy=strategy
+                    search_strategy=current_strategy
                 )
-                context.add_extraction(raw_data, url)
                 
                 if not raw_data.get('success'):
                     print(f"   ❌ Crawl failed: {raw_data.get('error')}")
                     context.current_attempt += 1
                     continue
                 
-                print(f"   ✓ Raw data extracted")
+                print(f"   ✓ Content crawled ({len(raw_data.get('content', ''))} chars)")
                 
-                # STEP 2: Validate with LLM
-                is_valid, quality_score, feedback = await self.validator.validate(raw_data, context)
+                # STEP 2: Try structured extraction first
+                structured_data = {}
+                if current_strategy in ["metadata", "default"]:
+                    json_ld = self.structured_extractor.extract_json_ld(raw_data.get('content', ''))
+                    metadata = self.structured_extractor.extract_metadata(raw_data.get('content', ''))
+                    structured_data = {**json_ld, **metadata}
+                    print(f"   ✓ Structured data found: {len(structured_data)} fields")
+                
+                # STEP 3: Use AI to extract fields
+                extracted_fields = await self.extractor.extract_fields(
+                    content=raw_data.get('content', ''),
+                    criteria=criteria,
+                    user_query=query,
+                    data_type=data_type,
+                    strategy=current_strategy
+                )
+                
+                # Merge with structured data
+                if structured_data:
+                    for key, value in structured_data.items():
+                        if key not in extracted_fields or extracted_fields[key] is None:
+                            extracted_fields[key] = value
+                
+                print(f"   ✓ AI extracted: {sum(1 for v in extracted_fields.values() if v)} fields")
+                
+                # STEP 4: Validate with AI
+                is_valid, quality_score, validation_details = await self.validator.validate(
+                    extracted_fields=extracted_fields,
+                    content=raw_data.get('content', ''),
+                    context=context
+                )
                 
                 print(f"   Quality: {quality_score:.0%} | Valid: {is_valid}")
-                print(f"   {feedback}")
+                print(f"   Feedback: {validation_details.get('feedback', 'N/A')[:80]}")
                 
                 # Track best quality
                 if quality_score > best_quality_score:
                     best_quality_score = quality_score
-                    all_extracted_data = raw_data.get('extracted_fields', {})
+                    best_extracted_data = extracted_fields
+                    best_validation_details = validation_details
                 
-                # STEP 3: Decide next action
+                # STEP 5: AI-powered decision
                 if is_valid:
                     print(f"   ✅ Extraction complete!")
                     is_complete = True
                 else:
-                    # STEP 4: Get refinement suggestions
-                    refinement = await self.feedback_loop.refine_extraction(
-                        context,
-                        url,
-                        (is_valid, quality_score, feedback)
-                    )
-                    
-                    if refinement[1] == "complete":
+                    # STEP 6: AI feedback loop
+                    if context.current_attempt < context.max_attempts:
+                        next_strategy, reasoning = await self.feedback_loop.analyze_and_refine(
+                            context=context,
+                            last_validation_details=validation_details,
+                            current_strategy=current_strategy
+                        )
+                        
+                        print(f"   🔄 Next strategy: {next_strategy}")
+                        print(f"   Reasoning: {reasoning[:80]}")
+                        
+                        strategy_evolution.append({
+                            'from': current_strategy,
+                            'to': next_strategy,
+                            'reason': reasoning,
+                            'quality_before': quality_score
+                        })
+                        
+                        current_strategy = next_strategy
+                        context.current_attempt += 1
+                    else:
                         print(f"   ⏹️ Max attempts reached")
                         is_complete = True
-                    else:
-                        print(f"   🔄 Refining strategy...")
-                        refinement_history.append(refinement[0])
-                        context.current_attempt += 1
         
         # Return results
         return {
             'success': best_quality_score >= 0.75,
-            'data': all_extracted_data,
+            'data': best_extracted_data or {},
             'quality_score': best_quality_score,
             'attempts': context.current_attempt,
             'history': context.extraction_history,
             'feedback': context.feedback_history,
+            'validation_history': context.validation_history,
+            'strategy_evolution': strategy_evolution,
+            'validation_details': best_validation_details,
             'data_type': data_type,
             'query': query,
             'completed_at': datetime.now().isoformat()
         }
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Export
-# ═══════════════════════════════════════════════════════════════════════
-
 __all__ = [
     'IntelligenceAgent',
     'SmartCrawler',
-    'DataValidator',
-    'FeedbackLoop',
+    'AIExtractor',
+    'AIValidator',
+    'AIFeedbackLoop',
+    'StructuredDataExtractor',
     'ExtractionContext',
     'DataQuality',
 ]
